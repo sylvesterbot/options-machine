@@ -33,6 +33,7 @@ import pandas as pd
 from scanner.forward_factor import compute_forward_factor
 from scanner.skew_score import compute_skew_score
 from scanner.momentum import compute_momentum
+from scanner.historical_moves import compute_historical_move_stats
 
 
 DEFAULT_TICKERS = [
@@ -53,6 +54,10 @@ class ScanRow:
     expected_move_pct: float
     option_volume: float
     open_interest: float
+    avg_hist_move: float = float("nan")
+    max_hist_move: float = float("nan")
+    num_earnings: int = 0
+    move_ratio: float = float("nan")
     # Strategy B: Forward Factor
     forward_factor: float = float("nan")
     ff_signal: str = "NONE"
@@ -352,6 +357,7 @@ def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = 
 
             iv_rv = float(iv30 / rv30) if rv30 and rv30 > 0 and not np.isnan(iv30) else float("nan")
             em = implied_move_pct(atm, spot)
+            hist = compute_historical_move_stats(symbol=symbol, current_expected_move=em, obb_client=obb)
 
             # Strategy B: Forward Factor
             ff_data = compute_forward_factor(chain, spot)
@@ -378,6 +384,10 @@ def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = 
                     rv30=rv30,
                     iv_rv_ratio=iv_rv,
                     expected_move_pct=em,
+                    avg_hist_move=float(hist.get("avg_hist_move", float("nan"))),
+                    max_hist_move=float(hist.get("max_hist_move", float("nan"))),
+                    num_earnings=int(hist.get("num_earnings", 0) or 0),
+                    move_ratio=float(hist.get("move_ratio", float("nan"))),
                     option_volume=vol,
                     open_interest=oi,
                     forward_factor=ff_data["forward_factor"],
@@ -451,14 +461,14 @@ def to_markdown(df: pd.DataFrame, args: argparse.Namespace) -> str:
         return "\n".join(lines)
 
     view = df.copy()
-    for c in ["spot", "iv30_proxy", "rv30", "iv_rv_ratio", "expected_move_pct", "option_volume", "open_interest"]:
+    for c in ["spot", "iv30_proxy", "rv30", "iv_rv_ratio", "expected_move_pct", "avg_hist_move", "max_hist_move", "move_ratio", "option_volume", "open_interest"]:
         view[c] = pd.to_numeric(view[c], errors="coerce")
 
     lines += [
         "## Top Candidates",
         "",
-        "| Symbol | Earnings | Spot | IV/RV | FF | Skew | Mom | Strategies |",
-        "|--------|----------|------|-------|-----|------|-----|------------|",
+        "| Symbol | Earnings | Spot | IV/RV | MvRatio | FF | Skew | Mom | Strategies |",
+        "|--------|----------|------|-------|---------|-----|------|-----|------------|",
     ]
     for _, r in view.iterrows():
         d = r.to_dict()
@@ -466,11 +476,12 @@ def to_markdown(df: pd.DataFrame, args: argparse.Namespace) -> str:
         edate = str(d.get("earnings_date", ""))
         spot = f"{d.get('spot', 0):.2f}"
         iv_rv = f"{d.get('iv_rv_ratio', 0):.2f}" if not np.isnan(d.get("iv_rv_ratio", float("nan"))) else "-"
+        mv_ratio = f"{d.get('move_ratio', 0):.2f}" if not np.isnan(d.get("move_ratio", float("nan"))) else "-"
         ff = f"{d.get('forward_factor', 0):.2f}" if not np.isnan(d.get("forward_factor", float("nan"))) else "-"
         ps = f"{d.get('put_skew', 0):.2f}" if not np.isnan(d.get("put_skew", float("nan"))) else "-"
         mom = d.get("momentum_dir", "?")[:4]
         strats = d.get("strategies", "") or "-"
-        lines.append(f"| {sym} | {edate} | {spot} | {iv_rv} | {ff} | {ps} | {mom} | {strats} |")
+        lines.append(f"| {sym} | {edate} | {spot} | {iv_rv} | {mv_ratio} | {ff} | {ps} | {mom} | {strats} |")
 
     lines += [
         "",
