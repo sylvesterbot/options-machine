@@ -39,8 +39,22 @@ export FMP_API_KEY="your_key_here"
 
 ## Usage
 
+Daily scan (primary entrypoint):
+
 ```bash
 python run_scan.py --window-days 14 --debug --alert
+```
+
+Outcome reconciliation (post-earnings):
+
+```bash
+python run_outcome_check.py --debug
+```
+
+Weekly rollup report:
+
+```bash
+python run_weekly_report.py
 ```
 
 ## Output Example
@@ -79,10 +93,10 @@ Measures OTM put/call implied vol relative to ATM and combines with momentum dir
 
 ## Academic References
 
-- Carr, P., & Wu, L. (2009)
-- Goyal, A., & Saretto, A. (2009)
-- Gao, P., Xing, Y., & Zhang, L. (2018)
-- Bollen, N. P. B., & Whaley, R. E. (2004)
+- Carr, P., & Wu, L. (2009). *Variance Risk Premiums*. **Review of Financial Studies**.
+- Goyal, A., & Saretto, A. (2009). *Cross-Section of Option Returns and Volatility*. **Journal of Financial Economics**.
+- Gao, P., Xing, Y., & Zhang, L. (2018). *Anticipating Uncertainty: Straddle Around Earnings Announcements*. **Journal of Financial Economics**.
+- Bollen, N. P. B., & Whaley, R. E. (2004). *Does Net Buying Pressure Affect the Shape of Implied Volatility Functions?* **Journal of Finance**.
 
 ## License
 
