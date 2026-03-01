@@ -1,0 +1,48 @@
+"""Format Telegram alerts for daily scans and outcomes."""
+import pandas as pd
+import numpy as np
+
+
+def format_daily_alert(df: pd.DataFrame) -> str:
+    if df.empty:
+        return "📊 Options Machine — No candidates found today."
+
+    lines = [f"📊 Options Machine Scan — {pd.Timestamp.now().strftime('%b %d, %Y')}", ""]
+
+    # Group by signal strength
+    strong = df[df["strategies"].str.contains(",", na=False)]  # multi-strategy
+    single = df[~df["strategies"].str.contains(",", na=False) & (df["strategies"] != "")]
+    no_sig = df[df["strategies"] == ""]
+
+    if not strong.empty:
+        lines.append("🔴 STRONG (multi-strategy):")
+        for _, r in strong.iterrows():
+            d = r.to_dict()
+            iv_rv = f"IV/RV: {d['iv_rv_ratio']:.2f}" if not np.isnan(d.get("iv_rv_ratio", float("nan"))) else ""
+            ff = f"FF: {d['forward_factor']:.2f}" if not np.isnan(d.get("forward_factor", float("nan"))) else ""
+            parts = [p for p in [iv_rv, ff] if p]
+            lines.append(f"  • {d['symbol']} [{d['strategies']}] — {' | '.join(parts)} | Earnings {d['earnings_date']}")
+        lines.append("")
+
+    if not single.empty:
+        lines.append("🟡 MODERATE (single strategy):")
+        for _, r in single.iterrows():
+            d = r.to_dict()
+            iv_rv = f"IV/RV: {d['iv_rv_ratio']:.2f}" if not np.isnan(d.get("iv_rv_ratio", float("nan"))) else ""
+            lines.append(f"  • {d['symbol']} [{d['strategies']}] — {iv_rv} | Earnings {d['earnings_date']}")
+        lines.append("")
+
+    lines.append("Strategy key: A=IV Crush, B=Calendar, C=Skew Vertical")
+    return "\n".join(lines)
+
+
+def format_outcome_alert(alerts: list[dict]) -> str:
+    if not alerts:
+        return ""
+    lines = ["📈 Post-Earnings Outcomes:", ""]
+    for a in alerts:
+        emoji = "✅" if a["outcome"] == "win" else "❌"
+        exp = f"{a['expected_move']:.1%}" if a.get("expected_move") else "?"
+        act = f"{a['actual_move']:.1%}"
+        lines.append(f"{emoji} {a['symbol']} — predicted {exp}, actual {act}")
+    return "\n".join(lines)

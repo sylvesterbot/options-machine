@@ -30,6 +30,10 @@ from typing import Any, Iterable
 import numpy as np
 import pandas as pd
 
+from scanner.forward_factor import compute_forward_factor
+from scanner.skew_score import compute_skew_score
+from scanner.momentum import compute_momentum
+
 
 DEFAULT_TICKERS = [
     "AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "TSLA", "AMD", "NFLX", "AVGO",
@@ -49,6 +53,20 @@ class ScanRow:
     expected_move_pct: float
     option_volume: float
     open_interest: float
+    # Strategy B: Forward Factor
+    forward_factor: float = float("nan")
+    ff_signal: str = "NONE"
+    front_iv: float = float("nan")
+    back_iv: float = float("nan")
+    # Strategy C: Skew
+    put_skew: float = float("nan")
+    call_skew: float = float("nan")
+    skew_signal: str = "NONE"
+    # Momentum
+    momentum_pct: float = float("nan")
+    momentum_dir: str = "NEUTRAL"
+    # Combined
+    strategies: str = ""
 
 
 class OpenBBClient:
@@ -335,6 +353,22 @@ def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = 
             iv_rv = float(iv30 / rv30) if rv30 and rv30 > 0 and not np.isnan(iv30) else float("nan")
             em = implied_move_pct(atm, spot)
 
+            # Strategy B: Forward Factor
+            ff_data = compute_forward_factor(chain, spot)
+            # Strategy C: Skew
+            skew_data = compute_skew_score(chain, spot, rv30)
+            # Momentum
+            mom_data = compute_momentum(px)
+
+            # Determine which strategies apply
+            strats = []
+            if not np.isnan(iv_rv) and iv_rv >= 1.25:
+                strats.append("A")
+            if not np.isnan(ff_data["forward_factor"]) and ff_data["forward_factor"] >= 0.2:
+                strats.append("B")
+            if skew_data["skew_signal"] != "NONE" and mom_data["momentum_dir"] != "NEUTRAL":
+                strats.append("C")
+
             rows.append(
                 ScanRow(
                     symbol=symbol,
@@ -346,6 +380,16 @@ def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = 
                     expected_move_pct=em,
                     option_volume=vol,
                     open_interest=oi,
+                    forward_factor=ff_data["forward_factor"],
+                    ff_signal=ff_data["ff_signal"],
+                    front_iv=ff_data.get("front_iv", float("nan")),
+                    back_iv=ff_data.get("back_iv", float("nan")),
+                    put_skew=skew_data.get("put_skew", float("nan")),
+                    call_skew=skew_data.get("call_skew", float("nan")),
+                    skew_signal=skew_data["skew_signal"],
+                    momentum_pct=mom_data["momentum_pct"],
+                    momentum_dir=mom_data["momentum_dir"],
+                    strategies=",".join(strats) if strats else "",
                 )
             )
         except Exception as exc:
@@ -413,15 +457,29 @@ def to_markdown(df: pd.DataFrame, args: argparse.Namespace) -> str:
     lines += [
         "## Top Candidates",
         "",
-        "| Symbol | Earnings Date | Spot | IV30 | RV30 | IV/RV | Exp Move % | Vol | OI |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| Symbol | Earnings | Spot | IV/RV | FF | Skew | Mom | Strategies |",
+        "|--------|----------|------|-------|-----|------|-----|------------|",
     ]
     for _, r in view.iterrows():
-        lines.append(
-            "| {symbol} | {earnings_date} | {spot:.2f} | {iv30_proxy:.3f} | {rv30:.3f} | {iv_rv_ratio:.3f} | {expected_move_pct:.3%} | {option_volume:.0f} | {open_interest:.0f} |".format(
-                **r.to_dict()
-            )
-        )
+        d = r.to_dict()
+        sym = d.get("symbol", "")
+        edate = str(d.get("earnings_date", ""))
+        spot = f"{d.get('spot', 0):.2f}"
+        iv_rv = f"{d.get('iv_rv_ratio', 0):.2f}" if not np.isnan(d.get("iv_rv_ratio", float("nan"))) else "-"
+        ff = f"{d.get('forward_factor', 0):.2f}" if not np.isnan(d.get("forward_factor", float("nan"))) else "-"
+        ps = f"{d.get('put_skew', 0):.2f}" if not np.isnan(d.get("put_skew", float("nan"))) else "-"
+        mom = d.get("momentum_dir", "?")[:4]
+        strats = d.get("strategies", "") or "-"
+        lines.append(f"| {sym} | {edate} | {spot} | {iv_rv} | {ff} | {ps} | {mom} | {strats} |")
+
+    lines += [
+        "",
+        "## Strategy Key",
+        "- **A** = Earnings IV Crush (IV/RV ≥ 1.25) → Sell straddle/iron condor",
+        "- **B** = Forward Factor (FF ≥ 0.2) → Long calendar spread",
+        "- **C** = Rich Skew + Momentum → Vertical spread",
+        "",
+    ]
 
     lines += [
         "",
