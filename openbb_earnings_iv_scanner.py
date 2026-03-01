@@ -185,14 +185,11 @@ class OpenBBClient:
         end = dt.date.today()
         start = end - dt.timedelta(days=days + 10)
         out = self._call_paths(
-            [
-                "equity.price.historical",
-                "equity.price.quote",
-                "stocks.price.historical",
-            ],
+            ["equity.price.historical"],
             symbol=symbol,
             start_date=start.isoformat(),
             end_date=end.isoformat(),
+            provider="yfinance",
         )
         if not isinstance(out, pd.DataFrame):
             raise RuntimeError("Unexpected price history response")
@@ -212,21 +209,21 @@ class OpenBBClient:
 
     def get_options_chain(self, symbol: str) -> pd.DataFrame:
         out = self._call_paths(
-            [
-                "derivatives.options.chains",
-                "equity.options.chains",
-                "options.chains",
-            ],
+            ["derivatives.options.chains"],
             symbol=symbol,
+            provider="yfinance",
         )
         if not isinstance(out, pd.DataFrame):
             raise RuntimeError("Unexpected options chain response")
         df = out.copy()
         rename = {}
         low = {c.lower(): c for c in df.columns}
-        for want in ["expiration", "strike", "option_type", "implied_volatility", "volume", "open_interest", "last_price"]:
+        for want in ["expiration", "strike", "option_type", "implied_volatility", "volume", "open_interest", "last_price", "last_trade_price"]:
             if want in low:
                 rename[low[want]] = want
+        # Map last_trade_price to last_price if needed
+        if "last_trade_price" in df.columns and "last_price" not in df.columns:
+            df = df.rename(columns={"last_trade_price": "last_price"})
         if rename:
             df = df.rename(columns=rename)
         if "expiration" not in df.columns or "strike" not in df.columns:
@@ -341,6 +338,7 @@ def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = 
             rows.append(
                 ScanRow(
                     symbol=symbol,
+                    earnings_date=str(edate),
                     spot=spot,
                     iv30_proxy=iv30,
                     rv30=rv30,
