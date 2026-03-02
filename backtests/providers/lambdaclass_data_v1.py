@@ -72,6 +72,8 @@ class LambdaClassDataV1Provider(BaseDataProvider):
             ("type", "option_type"),
             ("bid", "bid"),
             ("ask", "ask"),
+            ("implied_volatility", "implied_volatility"),
+            ("iv", "implied_volatility"),
         ]:
             if source in colmap:
                 ren[colmap[source]] = target
@@ -84,6 +86,8 @@ class LambdaClassDataV1Provider(BaseDataProvider):
         df["bid"] = pd.to_numeric(df["bid"], errors="coerce")
         df["ask"] = pd.to_numeric(df["ask"], errors="coerce")
         df["option_type"] = df["option_type"].astype(str).str.lower().str[0].map({"c": "call", "p": "put"})
+        if "implied_volatility" in df.columns:
+            df["implied_volatility"] = pd.to_numeric(df["implied_volatility"], errors="coerce")
         return df.dropna(subset=["date", "symbol", "expiration", "strike", "option_type", "bid", "ask"]).copy()
 
     def _load_earnings(self) -> pd.DataFrame:
@@ -113,7 +117,10 @@ class LambdaClassDataV1Provider(BaseDataProvider):
     def get_options_chain(self, symbol: str, date: dt.date) -> pd.DataFrame:
         s = symbol.upper()
         df = self._options[(self._options["symbol"] == s) & (self._options["date"] == date)]
-        return df[["date", "symbol", "expiration", "strike", "option_type", "bid", "ask"]].sort_values(["expiration", "strike"]).reset_index(drop=True)
+        cols = ["date", "symbol", "expiration", "strike", "option_type", "bid", "ask"]
+        if "implied_volatility" in df.columns:
+            cols.append("implied_volatility")
+        return df[cols].sort_values(["expiration", "strike"]).reset_index(drop=True)
 
     def get_earnings_calendar(self, start: dt.date, end: dt.date) -> pd.DataFrame:
         if self._earnings.empty:

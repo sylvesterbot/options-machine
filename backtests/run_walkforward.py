@@ -10,6 +10,7 @@ if __package__ in (None, ""):
     sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from backtests.providers.registry import resolve_provider
+from backtests.strategy_b import simulate_strategy_b, summarize_trade_log
 
 
 def _add_years(d: dt.date, years: int) -> dt.date:
@@ -17,6 +18,8 @@ def _add_years(d: dt.date, years: int) -> dt.date:
 
 
 def build_walkforward_windows(start: dt.date, end: dt.date, train_years: int = 2, test_years: int = 2, step_years: int = 1) -> list[dict]:
+    if train_years <= 0:
+        return [{"train_start": start, "train_end": start - dt.timedelta(days=1), "test_start": start, "test_end": end}]
     windows = []
     cursor = start
     while True:
@@ -37,29 +40,45 @@ def run_walkforward(
     out_path: str,
     provider_name: str = "mock",
     provider_root: str = "data/lambdaclass-data-v1",
+    strategy: str = "B",
+    symbols: list[str] | None = None,
+    ff_threshold: float = 0.2,
+    holding_days: int = 10,
+    exit_mode: str = "fixed",
+    train_years: int = 2,
+    test_years: int = 2,
+    step_years: int = 1,
 ) -> pd.DataFrame:
     provider = resolve_provider(provider_name, root_dir=provider_root)
-    windows = build_walkforward_windows(start, end)
-    trades = []
+    windows = build_walkforward_windows(start, end, train_years=train_years, test_years=test_years, step_years=step_years)
+    all_trades = []
+    symbols = symbols or ["SPY"]
+
     for i, w in enumerate(windows, start=1):
-        cal = provider.get_earnings_calendar(w["test_start"], w["test_end"])
-        if cal.empty:
-            continue
-        for _, row in cal.iterrows():
-            trades.append(
-                {
-                    "window_id": i,
-                    "symbol": row["symbol"],
-                    "earnings_date": str(row["earnings_date"]),
-                    "strategy": "A1",
-                    "return": 0.01,
-                    "provider": provider_name,
-                }
-            )
-    df = pd.DataFrame(trades)
+        for sym in symbols:
+            if strategy == "B":
+                tdf = simulate_strategy_b(
+                    provider=provider,
+                    symbol=sym,
+                    start=w["test_start"],
+                    end=w["test_end"],
+                    ff_threshold=ff_threshold,
+                    holding_days=holding_days,
+                    exit_mode=exit_mode,
+                )
+                if not tdf.empty:
+                    tdf = tdf.copy()
+                    tdf["window_id"] = i
+                    tdf["strategy"] = "B"
+                    tdf["provider"] = provider_name
+                    all_trades.append(tdf)
+
+    out_df = pd.concat(all_trades, ignore_index=True) if all_trades else pd.DataFrame(
+        columns=["symbol", "entry_date", "exit_date", "entry_price", "exit_price", "return_pct", "ff_entry", "ff_exit", "ff_pair", "window_id", "strategy", "provider"]
+    )
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(out_path, index=False)
-    return df
+    out_df.to_csv(out_path, index=False)
+    return out_df
 
 
 def main() -> int:
@@ -69,12 +88,37 @@ def main() -> int:
     parser.add_argument("--out", default="outputs/walkforward_trades.csv")
     parser.add_argument("--provider", default="mock", choices=["mock", "lambdaclass", "polygon", "thetadata", "eodhd"])
     parser.add_argument("--provider-root", default="data/lambdaclass-data-v1")
+    parser.add_argument("--strategy", default="B", choices=["B"])
+    parser.add_argument("--symbols", default="SPY")
+    parser.add_argument("--ff-threshold", type=float, default=0.2)
+    parser.add_argument("--holding-days", type=int, default=10)
+    parser.add_argument("--exit-mode", default="fixed", choices=["fixed", "mean_revert"])
+    parser.add_argument("--train-years", type=int, default=2)
+    parser.add_argument("--test-years", type=int, default=2)
+    parser.add_argument("--step-years", type=int, default=1)
     args = parser.parse_args()
 
     start = dt.date.fromisoformat(args.start)
     end = dt.date.fromisoformat(args.end)
-    df = run_walkforward(start, end, args.out, provider_name=args.provider, provider_root=args.provider_root)
-    print(f"walkforward done. provider={args.provider} trades={len(df)} out={args.out}")
+    symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+    df = run_walkforward(
+        start,
+        end,
+        args.out,
+        provider_name=args.provider,
+        provider_root=args.provider_root,
+        strategy=args.strategy,
+        symbols=symbols,
+        ff_threshold=args.ff_threshold,
+        holding_days=args.holding_days,
+        exit_mode=args.exit_mode,
+        train_years=args.train_years,
+        test_years=args.test_years,
+        step_years=args.step_years,
+    )
+    summary = summarize_trade_log(df)
+    print(f"walkforward done. provider={args.provider} strategy={args.strategy} trades={len(df)} out={args.out}")
+    print(f"summary: total_return={summary['total_return']:.4f} avg_return={summary['avg_return']:.4f} vol={summary['volatility']:.4f} max_dd={summary['max_drawdown']:.4f}")
     return 0
 
 

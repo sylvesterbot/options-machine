@@ -131,6 +131,18 @@ mkdir -p data/lambdaclass-data-v1
 python backtests/run_walkforward.py   --provider lambdaclass   --provider-root data/lambdaclass-data-v1   --start 2018-01-01   --end 2024-12-31   --out outputs/walkforward_trades.csv
 ```
 
+
+
+### Strategy B backtest (ETF-friendly, no earnings dependency)
+
+For SPY/IWM/QQQ style datasets, run Strategy B directly:
+
+```bash
+python backtests/run_walkforward.py   --provider lambdaclass   --provider-root data/lambdaclass-data-v1   --strategy B   --symbols SPY,IWM,QQQ   --start 2020-01-01   --end 2024-12-31   --ff-threshold 0.2   --holding-days 10   --exit-mode fixed   --out outputs/walkforward_strategy_b.csv
+```
+
+Note: A1 earnings strategy may produce zero trades for ETFs due to no earnings events.
+
 ### Known dataset limitations
 
 - Coverage and date range depend on the extracted data-v1 bundle.

@@ -21,8 +21,8 @@ EMPTY = {
 }
 
 
-def compute_forward_factor(chain: pd.DataFrame, spot: float) -> dict:
-    today = dt.date.today()
+def compute_forward_factor(chain: pd.DataFrame, spot: float, as_of_date: dt.date | None = None) -> dict:
+    today = as_of_date or dt.date.today()
     expiries = sorted([e for e in chain["expiration"].unique() if e > today])
     if len(expiries) < 2:
         return dict(EMPTY)

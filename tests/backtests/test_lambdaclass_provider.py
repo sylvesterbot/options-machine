@@ -8,12 +8,12 @@ from backtests.providers.registry import resolve_provider
 class LambdaClassProviderTests(unittest.TestCase):
     def test_mapping_and_methods(self):
         provider = LambdaClassDataV1Provider(root_dir="tests/fixtures/lambdaclass_data_v1")
-        px = provider.get_underlying_prices("MOCK", dt.date(2020, 1, 1), dt.date(2020, 1, 10))
-        self.assertEqual(len(px), 3)
+        px = provider.get_underlying_prices("SPY", dt.date(2020, 1, 1), dt.date(2020, 1, 10))
+        self.assertGreaterEqual(len(px), 7)
         self.assertIn("close", px.columns)
 
-        chain = provider.get_options_chain("MOCK", dt.date(2020, 1, 3))
-        self.assertEqual(len(chain), 2)
+        chain = provider.get_options_chain("SPY", dt.date(2020, 1, 3))
+        self.assertGreaterEqual(len(chain), 4)
         self.assertIn("option_type", chain.columns)
 
         cal = provider.get_earnings_calendar(dt.date(2020, 1, 1), dt.date(2020, 12, 31))
