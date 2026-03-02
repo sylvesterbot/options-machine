@@ -61,6 +61,9 @@ class ScanRow:
     max_hist_move: float = float("nan")
     num_earnings: int = 0
     move_ratio: float = float("nan")
+    implied_vs_last_implied: float = float("nan")
+    implied_vs_last_realized: float = float("nan")
+    implied_vs_avg_implied: float = float("nan")
     # Strategy B: Forward Factor
     forward_factor: float = float("nan")
     ff_30_60: float = float("nan")
@@ -570,6 +573,9 @@ def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = 
                     max_hist_move=float(hist.get("max_hist_move", float("nan"))),
                     num_earnings=int(hist.get("num_earnings", 0) or 0),
                     move_ratio=float(hist.get("move_ratio", float("nan"))),
+                    implied_vs_last_implied=float(hist.get("implied_vs_last_implied", float("nan"))),
+                    implied_vs_last_realized=float(hist.get("implied_vs_last_realized", float("nan"))),
+                    implied_vs_avg_implied=float(hist.get("implied_vs_avg_implied", float("nan"))),
                     option_volume=vol,
                     open_interest=oi,
                     forward_factor=ff_data.get("forward_factor", float("nan")),

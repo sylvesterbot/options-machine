@@ -22,15 +22,22 @@ def compute_kelly_discrete(win_rate: float, avg_win: float, avg_loss: float) -> 
     return float(max(0.0, k))
 
 
-def compute_kelly_empirical(returns: list[float]) -> float:
+def compute_kelly_empirical(returns: list[float], n_grid: int = 200) -> float:
     arr = np.array(returns, dtype=float)
     if len(arr) < 2:
         return 0.0
-    mu = float(np.mean(arr))
-    var = float(np.var(arr, ddof=1))
-    if var <= 1e-10:
-        return 0.0
-    return float(max(0.0, mu / var))
+    grid = np.linspace(0.005, 0.50, n_grid)
+    best_f = 0.0
+    best_obj = -np.inf
+    for f in grid:
+        vals = 1.0 + f * arr
+        if np.any(vals <= 0):
+            continue
+        obj = float(np.mean(np.log(vals)))
+        if obj > best_obj:
+            best_obj = obj
+            best_f = float(f)
+    return float(max(0.0, best_f))
 
 
 def compute_kelly_fraction(

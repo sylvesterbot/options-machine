@@ -34,6 +34,9 @@ def compute_historical_move_stats_from_data(
             "max_hist_move": float("nan"),
             "num_earnings": 0,
             "move_ratio": float("nan"),
+            "implied_vs_last_implied": float("nan"),
+            "implied_vs_last_realized": float("nan"),
+            "implied_vs_avg_implied": float("nan"),
         }
 
     px = price_history.copy()
@@ -46,6 +49,9 @@ def compute_historical_move_stats_from_data(
             "max_hist_move": float("nan"),
             "num_earnings": 0,
             "move_ratio": float("nan"),
+            "implied_vs_last_implied": float("nan"),
+            "implied_vs_last_realized": float("nan"),
+            "implied_vs_avg_implied": float("nan"),
         }
 
     trading_dates = [d.date() for d in px["date"]]
@@ -80,17 +86,27 @@ def compute_historical_move_stats_from_data(
             "max_hist_move": float("nan"),
             "num_earnings": 0,
             "move_ratio": float("nan"),
+            "implied_vs_last_implied": float("nan"),
+            "implied_vs_last_realized": float("nan"),
+            "implied_vs_avg_implied": float("nan"),
         }
 
     avg_hist_move = float(np.mean(moves))
     max_hist_move = float(np.max(moves))
     move_ratio = float(current_expected_move / avg_hist_move) if avg_hist_move > 0 else float("nan")
 
+    implied_vs_last_implied = float(current_expected_move / moves[-1]) if moves else float("nan")
+    implied_vs_last_realized = float(current_expected_move - moves[-1]) if moves else float("nan")
+    implied_vs_avg_implied = float(current_expected_move / avg_hist_move) if avg_hist_move > 0 else float("nan")
+
     return {
         "avg_hist_move": avg_hist_move,
         "max_hist_move": max_hist_move,
         "num_earnings": len(moves),
         "move_ratio": move_ratio,
+        "implied_vs_last_implied": implied_vs_last_implied,
+        "implied_vs_last_realized": implied_vs_last_realized,
+        "implied_vs_avg_implied": implied_vs_avg_implied,
     }
 
 
@@ -109,6 +125,9 @@ def compute_historical_move_stats(
             "max_hist_move": float("nan"),
             "num_earnings": 0,
             "move_ratio": float("nan"),
+            "implied_vs_last_implied": float("nan"),
+            "implied_vs_last_realized": float("nan"),
+            "implied_vs_avg_implied": float("nan"),
         }
     if earnings is None or len(earnings) == 0:
         return {
@@ -116,6 +135,9 @@ def compute_historical_move_stats(
             "max_hist_move": float("nan"),
             "num_earnings": 0,
             "move_ratio": float("nan"),
+            "implied_vs_last_implied": float("nan"),
+            "implied_vs_last_realized": float("nan"),
+            "implied_vs_avg_implied": float("nan"),
         }
 
     raw_idx = list(getattr(earnings, "index", []))
@@ -126,6 +148,9 @@ def compute_historical_move_stats(
             "max_hist_move": float("nan"),
             "num_earnings": 0,
             "move_ratio": float("nan"),
+            "implied_vs_last_implied": float("nan"),
+            "implied_vs_last_realized": float("nan"),
+            "implied_vs_avg_implied": float("nan"),
         }
 
     first_date = _as_naive_date(min(earnings_idx))
@@ -136,6 +161,9 @@ def compute_historical_move_stats(
             "max_hist_move": float("nan"),
             "num_earnings": 0,
             "move_ratio": float("nan"),
+            "implied_vs_last_implied": float("nan"),
+            "implied_vs_last_realized": float("nan"),
+            "implied_vs_avg_implied": float("nan"),
         }
 
     start = first_date - dt.timedelta(days=7)
@@ -160,6 +188,9 @@ def compute_historical_move_stats(
             "max_hist_move": float("nan"),
             "num_earnings": 0,
             "move_ratio": float("nan"),
+            "implied_vs_last_implied": float("nan"),
+            "implied_vs_last_realized": float("nan"),
+            "implied_vs_avg_implied": float("nan"),
         }
 
     normalized = pd.DataFrame({"date": price_df[date_col], "close": price_df[close_col]})

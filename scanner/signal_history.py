@@ -39,9 +39,9 @@ def append_signals(records: list[dict], path: str = DEFAULT_PATH) -> None:
     out.to_csv(p, index=False)
 
 
-def _zscore(series: pd.Series, value: float) -> float:
+def _zscore(series: pd.Series, value: float, min_obs: int = 20) -> float:
     s = pd.to_numeric(series, errors="coerce").dropna()
-    if len(s) < 5:
+    if len(s) < min_obs:
         return float("nan")
     std = float(s.std(ddof=1))
     if std <= 1e-9:

@@ -15,6 +15,12 @@ class KellyV2Tests(unittest.TestCase):
         k2 = compute_kelly_empirical([0.05, -0.02, 0.03, 0.04, -0.01] * 20)
         self.assertGreaterEqual(k2, 0)
 
+
+    def test_empirical_grid_search(self):
+        k = compute_kelly_empirical([0.10, -0.05, 0.12, -0.03, 0.08] * 30)
+        self.assertGreaterEqual(k, 0.0)
+        self.assertLessEqual(k, 0.50)
+
     def test_governor(self):
         self.assertLess(apply_drawdown_governor(0.08, -0.2), 0.08)
 
