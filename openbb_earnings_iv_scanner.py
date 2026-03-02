@@ -60,9 +60,18 @@ class ScanRow:
     move_ratio: float = float("nan")
     # Strategy B: Forward Factor
     forward_factor: float = float("nan")
+    ff_30_60: float = float("nan")
+    ff_60_90: float = float("nan")
+    ff_30_90: float = float("nan")
+    ff_best: float = float("nan")
+    ff_best_pair: str = "NONE"
     ff_signal: str = "NONE"
     front_iv: float = float("nan")
     back_iv: float = float("nan")
+    days_to_earnings: int = 0
+    earnings_distortion_flag: bool = False
+    ff_note: str = "X_EARN"
+    advice: str = ""
     # Strategy C: Skew
     put_skew: float = float("nan")
     call_skew: float = float("nan")
@@ -294,6 +303,34 @@ def implied_move_pct(atm: pd.DataFrame, spot: float) -> float:
     return float((c.iloc[0] + p.iloc[0]) / spot)
 
 
+
+
+def build_advice(strategies: str, ff_note: str = "") -> str:
+    strategy_set = {x.strip() for x in (strategies or "").split(",") if x.strip()}
+    advice_parts: list[str] = []
+    if "A" in strategy_set:
+        advice_parts.append("Hold-through-earnings: Long calendar spread (sell front, buy back month).")
+        advice_parts.append("If selling premium, use defined-risk only (iron condor/iron fly) with explicit tail-risk controls.")
+        advice_parts.append("Short straddle is only for pre-announcement IV ramp harvesting and should be exited BEFORE earnings.")
+    if "B" in strategy_set:
+        advice_parts.append("Forward Factor supports calendar structures; prefer X-earn windows.")
+    if ff_note == "EARNINGS_IN_WINDOW":
+        advice_parts.append("Earnings distortion present: treat FF signal as potentially event-distorted.")
+    if "C" in strategy_set:
+        advice_parts.append("For skew/momentum setups, prefer defined-risk verticals.")
+    return " ".join(advice_parts) if advice_parts else "No high-conviction setup."
+
+
+def compute_earnings_distortion(earnings_date: dt.date, pair_expiries: dict[str, list[str]], ff_best_pair: str) -> tuple[bool, str]:
+    if ff_best_pair not in pair_expiries:
+        return False, "X_EARN"
+    try:
+        front_exp = dt.date.fromisoformat(pair_expiries[ff_best_pair][0])
+    except Exception:
+        return False, "X_EARN"
+    distorted = earnings_date <= front_exp
+    return distorted, ("EARNINGS_IN_WINDOW" if distorted else "X_EARN")
+
 def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = False) -> pd.DataFrame:
     obb = OpenBBClient()
     tickers = obb.get_sp500_universe()
@@ -361,6 +398,9 @@ def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = 
 
             # Strategy B: Forward Factor
             ff_data = compute_forward_factor(chain, spot)
+            earnings_dt = edate if isinstance(edate, dt.date) else dt.date.fromisoformat(str(edate))
+            days_to_earnings = (earnings_dt - dt.date.today()).days
+            distorted, ff_note = compute_earnings_distortion(earnings_dt, ff_data.get("pair_expiries", {}), ff_data.get("ff_best_pair", "NONE"))
             # Strategy C: Skew
             skew_data = compute_skew_score(chain, spot, rv30)
             # Momentum
@@ -370,7 +410,7 @@ def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = 
             strats = []
             if not np.isnan(iv_rv) and iv_rv >= 1.25:
                 strats.append("A")
-            if not np.isnan(ff_data["forward_factor"]) and ff_data["forward_factor"] >= 0.2:
+            if not np.isnan(ff_data.get("ff_best", float("nan"))) and ff_data.get("ff_best", float("nan")) >= 0.2:
                 strats.append("B")
             if skew_data["skew_signal"] != "NONE" and mom_data["momentum_dir"] != "NEUTRAL":
                 strats.append("C")
@@ -390,10 +430,19 @@ def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = 
                     move_ratio=float(hist.get("move_ratio", float("nan"))),
                     option_volume=vol,
                     open_interest=oi,
-                    forward_factor=ff_data["forward_factor"],
-                    ff_signal=ff_data["ff_signal"],
+                    forward_factor=ff_data.get("forward_factor", float("nan")),
+                    ff_30_60=ff_data.get("ff_30_60", float("nan")),
+                    ff_60_90=ff_data.get("ff_60_90", float("nan")),
+                    ff_30_90=ff_data.get("ff_30_90", float("nan")),
+                    ff_best=ff_data.get("ff_best", float("nan")),
+                    ff_best_pair=ff_data.get("ff_best_pair", "NONE"),
+                    ff_signal=ff_data.get("ff_signal", "NONE"),
                     front_iv=ff_data.get("front_iv", float("nan")),
                     back_iv=ff_data.get("back_iv", float("nan")),
+                    days_to_earnings=days_to_earnings,
+                    earnings_distortion_flag=distorted,
+                    ff_note=ff_note,
+                    advice=build_advice(",".join(strats) if strats else "", ff_note=ff_note),
                     put_skew=skew_data.get("put_skew", float("nan")),
                     call_skew=skew_data.get("call_skew", float("nan")),
                     skew_signal=skew_data["skew_signal"],
@@ -461,14 +510,15 @@ def to_markdown(df: pd.DataFrame, args: argparse.Namespace) -> str:
         return "\n".join(lines)
 
     view = df.copy()
-    for c in ["spot", "iv30_proxy", "rv30", "iv_rv_ratio", "expected_move_pct", "avg_hist_move", "max_hist_move", "move_ratio", "option_volume", "open_interest"]:
-        view[c] = pd.to_numeric(view[c], errors="coerce")
+    for c in ["spot", "iv30_proxy", "rv30", "iv_rv_ratio", "expected_move_pct", "avg_hist_move", "max_hist_move", "move_ratio", "forward_factor", "ff_best", "option_volume", "open_interest"]:
+        if c in view.columns:
+            view[c] = pd.to_numeric(view[c], errors="coerce")
 
     lines += [
         "## Top Candidates",
         "",
-        "| Symbol | Earnings | Spot | IV/RV | MvRatio | FF | Skew | Mom | Strategies |",
-        "|--------|----------|------|-------|---------|-----|------|-----|------------|",
+        "| Symbol | Earnings | Spot | IV/RV | MvRatio | FFbest | FFpair | FFnote | Distorted? | Skew | Mom | Strategies |",
+        "|--------|----------|------|-------|---------|--------|--------|--------|------------|------|-----|------------|",
     ]
     for _, r in view.iterrows():
         d = r.to_dict()
@@ -477,17 +527,26 @@ def to_markdown(df: pd.DataFrame, args: argparse.Namespace) -> str:
         spot = f"{d.get('spot', 0):.2f}"
         iv_rv = f"{d.get('iv_rv_ratio', 0):.2f}" if not np.isnan(d.get("iv_rv_ratio", float("nan"))) else "-"
         mv_ratio = f"{d.get('move_ratio', 0):.2f}" if not np.isnan(d.get("move_ratio", float("nan"))) else "-"
-        ff = f"{d.get('forward_factor', 0):.2f}" if not np.isnan(d.get("forward_factor", float("nan"))) else "-"
+        ff = f"{d.get('ff_best', 0):.2f}" if not np.isnan(d.get("ff_best", float("nan"))) else "-"
+        ff_pair = d.get("ff_best_pair", "-")
+        ff_note = d.get("ff_note", "-")
+        distorted = "Y" if bool(d.get("earnings_distortion_flag", False)) else "N"
         ps = f"{d.get('put_skew', 0):.2f}" if not np.isnan(d.get("put_skew", float("nan"))) else "-"
         mom = d.get("momentum_dir", "?")[:4]
         strats = d.get("strategies", "") or "-"
-        lines.append(f"| {sym} | {edate} | {spot} | {iv_rv} | {mv_ratio} | {ff} | {ps} | {mom} | {strats} |")
+        lines.append(f"| {sym} | {edate} | {spot} | {iv_rv} | {mv_ratio} | {ff} | {ff_pair} | {ff_note} | {distorted} | {ps} | {mom} | {strats} |")
+
+    lines += ["", "## Per-Row Advice", ""]
+    for _, r in view.iterrows():
+        d = r.to_dict()
+        advice = d.get("advice", "") or "No high-conviction setup."
+        lines.append(f"- **{d.get('symbol','')}**: {advice}")
 
     lines += [
         "",
         "## Strategy Key",
-        "- **A** = Earnings IV Crush (IV/RV ≥ 1.25) → Sell straddle/iron condor",
-        "- **B** = Forward Factor (FF ≥ 0.2) → Long calendar spread",
+        "- **A** = Earnings IV Crush (IV/RV ≥ 1.25) → Hold-through: long calendar; if premium selling, defined-risk only (iron condor/iron fly).",
+        "- **B** = Forward Factor (best pair FF ≥ 0.2) → Long calendar spread; tag when earnings sit inside front-leg window.",
         "- **C** = Rich Skew + Momentum → Vertical spread",
         "",
     ]
