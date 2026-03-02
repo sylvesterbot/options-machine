@@ -98,6 +98,45 @@ Measures OTM put/call implied vol relative to ATM and combines with momentum dir
 - Gao, P., Xing, Y., & Zhang, L. (2018). *Anticipating Uncertainty: Straddle Around Earnings Announcements*. **Journal of Financial Economics**.
 - Bollen, N. P. B., & Whaley, R. E. (2004). *Does Net Buying Pressure Affect the Shape of Implied Volatility Functions?* **Journal of Finance**.
 
+
+
+## Backtest Providers (Plugin Architecture)
+
+Walk-forward backtests now use a pluggable provider registry.
+
+Supported provider names:
+- `lambdaclass` (implemented)
+- `mock` (implemented)
+- `polygon` (stub)
+- `thetadata` (stub)
+- `eodhd` (stub)
+
+### Lambdaclass data-v1 setup
+
+1. Download/extract the data-v1 release files into a local folder, e.g.:
+
+```bash
+mkdir -p data/lambdaclass-data-v1
+# copy extracted CSVs into that folder
+```
+
+2. Expected files:
+- `underlying_prices.csv` (required)
+- `options_eod.csv` (required)
+- `earnings_calendar.csv` (optional)
+
+3. Run walk-forward with provider=lambdaclass:
+
+```bash
+python backtests/run_walkforward.py   --provider lambdaclass   --provider-root data/lambdaclass-data-v1   --start 2018-01-01   --end 2024-12-31   --out outputs/walkforward_trades.csv
+```
+
+### Known dataset limitations
+
+- Coverage and date range depend on the extracted data-v1 bundle.
+- Earnings calendar may be partial or missing (adapter returns empty when absent).
+- Source schemas can differ; adapter applies strict normalization and will raise friendly errors if required columns are missing.
+
 ## License
 
 MIT

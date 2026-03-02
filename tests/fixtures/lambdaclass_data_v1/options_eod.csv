@@ -1,0 +1,3 @@
+date,symbol,expiration,strike,option_type,bid,ask
+2020-01-03,MOCK,2020-02-14,100,call,2.0,2.4
+2020-01-03,MOCK,2020-02-14,100,put,2.1,2.5
