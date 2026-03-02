@@ -38,5 +38,11 @@ class HistoricalMovesTests(unittest.TestCase):
         self.assertAlmostEqual(stats["move_ratio"], 1.0, places=6)
 
 
+    def test_handles_unparseable_earnings_dates(self) -> None:
+        prices = pd.DataFrame({"date": pd.to_datetime(["2024-10-30", "2024-11-01"]), "close": [100.0, 106.0]})
+        stats = compute_historical_move_stats_from_data(earnings_dates=["Earnings Date"], price_history=prices, current_expected_move=0.08)
+        self.assertEqual(stats["num_earnings"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

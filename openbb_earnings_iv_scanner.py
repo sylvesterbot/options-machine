@@ -158,17 +158,7 @@ class OpenBBClient:
         ]
 
         def _normalize(df: pd.DataFrame) -> pd.DataFrame:
-            cols = {c.lower(): c for c in df.columns}
-            sym_col = cols.get("symbol") or cols.get("ticker")
-            date_col = cols.get("date") or cols.get("earnings_date") or cols.get("report_date")
-            if not sym_col or not date_col:
-                raise RuntimeError(f"Earnings calendar missing required columns; got {list(df.columns)}")
-            out_df = df.rename(columns={sym_col: "symbol", date_col: "earnings_date"}).copy()
-            out_df["symbol"] = out_df["symbol"].astype(str).str.upper()
-            out_df["earnings_date"] = pd.to_datetime(out_df["earnings_date"], errors="coerce").dt.date
-            out_df = out_df[["symbol", "earnings_date"]].dropna().drop_duplicates()
-            out_df = out_df[(out_df["earnings_date"] >= start) & (out_df["earnings_date"] <= end)]
-            return out_df
+            return normalize_earnings_calendar_df(df, start=start, end=end)
 
         # 1) bulk attempts
         for kwargs, _label in attempts:
@@ -286,6 +276,30 @@ class OpenBBClient:
                 df[c] = pd.to_numeric(df[c], errors="coerce")
         return df.dropna(subset=["expiration", "strike"]) 
 
+
+
+
+def _norm_col_key(col: str) -> str:
+    return str(col).strip().lower().replace(" ", "_").replace("-", "_")
+
+
+def normalize_earnings_calendar_df(df: pd.DataFrame, start: dt.date, end: dt.date) -> pd.DataFrame:
+    cols = {_norm_col_key(c): c for c in df.columns}
+    sym_col = cols.get("symbol") or cols.get("ticker")
+    date_col = cols.get("date") or cols.get("earnings_date") or cols.get("report_date")
+    if not sym_col or not date_col:
+        raise RuntimeError(f"Earnings calendar missing required columns; got {list(df.columns)}")
+
+    out_df = df.rename(columns={sym_col: "symbol", date_col: "earnings_date"}).copy()
+    out_df["symbol"] = out_df["symbol"].astype(str).str.upper().str.strip()
+    out_df["earnings_date"] = pd.to_datetime(out_df["earnings_date"], errors="coerce").dt.date
+
+    # drop malformed rows (e.g., repeated header row values like 'Earnings Date')
+    out_df = out_df[["symbol", "earnings_date"]].dropna()
+    out_df = out_df[out_df["symbol"].str.fullmatch(r"[A-Z.\-]{1,10}", na=False)]
+    out_df = out_df.drop_duplicates()
+    out_df = out_df[(out_df["earnings_date"] >= start) & (out_df["earnings_date"] <= end)]
+    return out_df
 
 def realized_vol_30(price_df: pd.DataFrame) -> float:
     if len(price_df) < 35:
@@ -457,7 +471,7 @@ def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = 
 
     for _, er in earnings.iterrows():
         symbol = er["symbol"]
-        edate = er["earnings_date"]
+        edate = er.get("earnings_date") if hasattr(er, "get") else er["earnings_date"]
         try:
             px = obb.get_price_history(symbol)
             if px.empty:
@@ -487,7 +501,13 @@ def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = 
 
             # Strategy B: Forward Factor
             ff_data = compute_forward_factor(chain, spot, symbol=symbol, signal_history_path="data/signal_history.csv")
-            earnings_dt = edate if isinstance(edate, dt.date) else dt.date.fromisoformat(str(edate))
+            earnings_dt = pd.to_datetime(edate, errors="coerce")
+            if pd.isna(earnings_dt):
+                skip["exception"] += 1
+                if debug and len(exception_samples) < 10:
+                    exception_samples.append(f"{symbol}: invalid earnings_date={edate!r}")
+                continue
+            earnings_dt = earnings_dt.date()
             days_to_earnings = (earnings_dt - dt.date.today()).days
             distorted, ff_note = compute_earnings_distortion(earnings_dt, ff_data.get("pair_expiries", {}), ff_data.get("ff_best_pair", "NONE"))
             chain_g = enrich_chain_with_greeks(chain, spot=spot)

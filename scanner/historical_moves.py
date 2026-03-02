@@ -12,7 +12,10 @@ import yfinance as yf
 def _as_naive_date(value: Any) -> dt.date | None:
     if value is None:
         return None
-    ts = pd.Timestamp(value)
+    try:
+        ts = pd.Timestamp(value)
+    except Exception:
+        return None
     if pd.isna(ts):
         return None
     if ts.tzinfo is not None:
@@ -97,8 +100,16 @@ def compute_historical_move_stats(
     obb_client: Any,
     earnings_limit: int = 8,
 ) -> dict[str, float | int]:
-    ticker = yf.Ticker(symbol)
-    earnings = ticker.get_earnings_dates(limit=earnings_limit)
+    try:
+        ticker = yf.Ticker(symbol)
+        earnings = ticker.get_earnings_dates(limit=earnings_limit)
+    except Exception:
+        return {
+            "avg_hist_move": float("nan"),
+            "max_hist_move": float("nan"),
+            "num_earnings": 0,
+            "move_ratio": float("nan"),
+        }
     if earnings is None or len(earnings) == 0:
         return {
             "avg_hist_move": float("nan"),
@@ -107,7 +118,8 @@ def compute_historical_move_stats(
             "move_ratio": float("nan"),
         }
 
-    earnings_idx = list(getattr(earnings, "index", []))
+    raw_idx = list(getattr(earnings, "index", []))
+    earnings_idx = [e for e in raw_idx if _as_naive_date(e) is not None]
     if not earnings_idx:
         return {
             "avg_hist_move": float("nan"),
