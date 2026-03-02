@@ -57,6 +57,7 @@ class RunScanEntrypointTests(unittest.TestCase):
                 watchlist_jsonl=str(base / "data" / "watchlist.jsonl"),
                 capital=100000.0,
                 default_alloc=0.04,
+                portfolio_dd=0.0,
             )
 
             with (

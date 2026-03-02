@@ -16,3 +16,6 @@ IDENTITY.md
 SOUL.md
 TOOLS.md
 USER.md
+# quant pipeline artifacts
+data/signal_history.csv
+data/lambdaclass_data_v1/

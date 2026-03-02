@@ -34,6 +34,9 @@ from scanner.forward_factor import compute_forward_factor
 from scanner.skew_score import compute_skew_score
 from scanner.momentum import compute_momentum
 from scanner.historical_moves import compute_historical_move_stats
+from scanner.greeks import enrich_chain_with_greeks, compute_position_greeks
+from scanner.signal_history import append_signals, get_ticker_zscore, get_iv_percentile
+from backtests.kelly import compute_kelly_fraction
 
 
 DEFAULT_TICKERS = [
@@ -74,6 +77,21 @@ class ScanRow:
     advice: str = ""
     suggested_allocation_pct: float = 0.04
     suggested_allocation_usd: float = float("nan")
+    liquidity_capped: bool = False
+    iv_percentile_52w: float = float("nan")
+    ff_zscore: float = float("nan")
+    skew_zscore: float = float("nan")
+    iv_rv_zscore: float = float("nan")
+    otm_put_strike: float = float("nan")
+    otm_call_strike: float = float("nan")
+    otm_put_delta: float = float("nan")
+    otm_call_delta: float = float("nan")
+    rv_edge_put: float = float("nan")
+    rv_edge_call: float = float("nan")
+    net_delta: float = float("nan")
+    net_gamma: float = float("nan")
+    net_vega: float = float("nan")
+    net_theta: float = float("nan")
     # Strategy C: Skew
     put_skew: float = float("nan")
     call_skew: float = float("nan")
@@ -337,6 +355,19 @@ def compute_earnings_distortion(earnings_date: dt.date, pair_expiries: dict[str,
 
 
 
+def apply_liquidity_cap(allocation_pct: float, option_volume: float, open_interest: float) -> tuple[float, bool]:
+    liq = max(0.0, min(option_volume, open_interest))
+    cap = 0.08
+    if liq < 100:
+        cap = 0.02
+    elif liq < 500:
+        cap = 0.04
+    elif liq < 1000:
+        cap = 0.06
+    out = min(allocation_pct, cap)
+    return out, out < allocation_pct
+
+
 def load_kelly_calibration(path: str = "data/kelly_calibration.json") -> dict[str, float]:
     p = Path(path)
     if not p.exists():
@@ -361,24 +392,34 @@ def compute_suggested_allocation(
     skew_signal: str,
     capital: float | None = None,
     default_alloc: float = 0.04,
+    portfolio_dd: float = 0.0,
+    strategy_a_stats: dict | None = None,
 ) -> tuple[float, float]:
     alloc = float(default_alloc)
     strat_set = {x.strip() for x in (strategies or "").split(",") if x.strip()}
 
-    if "B" in strat_set and ff_signal == "STRONG" and not earnings_distortion_flag:
-        alloc += 0.01
     if "A" in strat_set:
-        alloc -= 0.01
+        win_rate = 0.5
+        avg_win = 0.08
+        avg_loss = 0.06
+        if strategy_a_stats:
+            win_rate = float(strategy_a_stats.get("win_rate", win_rate))
+            avg_win = float(strategy_a_stats.get("avg_win", avg_win))
+            avg_loss = float(strategy_a_stats.get("avg_loss", avg_loss))
+        alloc = compute_kelly_fraction(strategy="A", win_rate=win_rate, avg_win=avg_win, avg_loss=avg_loss, default_alloc=alloc, portfolio_dd=portfolio_dd)
+
+    if "B" in strat_set and ff_signal == "STRONG" and not earnings_distortion_flag:
+        alloc = compute_kelly_fraction(returns=[0.04, -0.02, 0.03] * 20, strategy="B", default_alloc=max(alloc, default_alloc), portfolio_dd=portfolio_dd)
     if ("C" in strat_set) and (momentum_dir in {"BULLISH", "BEARISH"}) and (skew_signal != "NONE"):
-        alloc += 0.005
+        alloc = min(0.08, alloc + 0.005)
     if earnings_distortion_flag and "B" in strat_set:
-        alloc -= 0.01
+        alloc = max(0.02, alloc - 0.01)
 
     alloc = min(0.08, max(0.02, alloc))
     usd = float("nan") if capital is None else float(capital) * alloc
     return float(alloc), float(usd)
 
-def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = False, capital: float | None = None, default_alloc: float = 0.04) -> pd.DataFrame:
+def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = False, capital: float | None = None, default_alloc: float = 0.04, portfolio_dd: float = 0.0) -> pd.DataFrame:
     obb = OpenBBClient()
     tickers = obb.get_sp500_universe()
     start = dt.date.today()
@@ -445,12 +486,14 @@ def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = 
             hist = compute_historical_move_stats(symbol=symbol, current_expected_move=em, obb_client=obb)
 
             # Strategy B: Forward Factor
-            ff_data = compute_forward_factor(chain, spot)
+            ff_data = compute_forward_factor(chain, spot, symbol=symbol, signal_history_path="data/signal_history.csv")
             earnings_dt = edate if isinstance(edate, dt.date) else dt.date.fromisoformat(str(edate))
             days_to_earnings = (earnings_dt - dt.date.today()).days
             distorted, ff_note = compute_earnings_distortion(earnings_dt, ff_data.get("pair_expiries", {}), ff_data.get("ff_best_pair", "NONE"))
+            chain_g = enrich_chain_with_greeks(chain, spot=spot)
+            pos_greeks = compute_position_greeks(chain_g)
             # Strategy C: Skew
-            skew_data = compute_skew_score(chain, spot, rv30)
+            skew_data = compute_skew_score(chain_g, spot, rv30)
             # Momentum
             mom_data = compute_momentum(px)
 
@@ -464,6 +507,12 @@ def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = 
                 strats.append("C")
 
             strategies_joined = ",".join(strats) if strats else ""
+            # history-derived z-scores / percentiles
+            ff_z = get_ticker_zscore(symbol, "ff_best", float(ff_data.get("ff_best", float("nan"))), path="data/signal_history.csv")
+            skew_z = get_ticker_zscore(symbol, "put_skew", float(skew_data.get("put_skew", float("nan"))), path="data/signal_history.csv")
+            ivrv_z = get_ticker_zscore(symbol, "iv_rv_ratio", float(iv_rv if not np.isnan(iv_rv) else float("nan")), path="data/signal_history.csv")
+            iv_pct = get_iv_percentile(symbol, float(iv_rv if not np.isnan(iv_rv) else float("nan")), path="data/signal_history.csv")
+
             strategy_for_alloc = strategies_joined or "NONE"
             mapped_default = default_alloc
             for key in (strategy_for_alloc, *(x for x in strategy_for_alloc.split(",") if x)):
@@ -478,7 +527,15 @@ def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = 
                 skew_signal=skew_data["skew_signal"],
                 capital=capital,
                 default_alloc=mapped_default,
+                portfolio_dd=portfolio_dd,
+                strategy_a_stats={"win_rate": 0.6 if float(hist.get("move_ratio", float("nan")) or 0) > 1 else 0.4, "avg_win": float(hist.get("avg_hist_move", 0.08) or 0.08), "avg_loss": max(0.02, float(hist.get("max_hist_move", 0.10) or 0.10))},
             )
+
+            alloc_pct_capped, was_capped = apply_liquidity_cap(alloc_pct, vol, oi)
+            if capital is not None:
+                alloc_usd = float(capital) * alloc_pct_capped
+
+            append_signals([{"timestamp_utc": dt.datetime.now(dt.UTC).isoformat(), "symbol": symbol, "iv_rv_ratio": iv_rv, "ff_best": ff_data.get("ff_best", float("nan")), "put_skew": skew_data.get("put_skew", float("nan")), "expected_move_pct": em}], path="data/signal_history.csv")
 
             rows.append(
                 ScanRow(
@@ -508,8 +565,23 @@ def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = 
                     earnings_distortion_flag=distorted,
                     ff_note=ff_note,
                     advice=build_advice(strategies_joined, ff_note=ff_note),
-                    suggested_allocation_pct=alloc_pct,
+                    suggested_allocation_pct=alloc_pct_capped,
                     suggested_allocation_usd=alloc_usd,
+                    liquidity_capped=was_capped,
+                    iv_percentile_52w=iv_pct,
+                    ff_zscore=ff_z,
+                    skew_zscore=skew_z,
+                    iv_rv_zscore=ivrv_z,
+                    otm_put_strike=skew_data.get("otm_put_strike", float("nan")),
+                    otm_call_strike=skew_data.get("otm_call_strike", float("nan")),
+                    otm_put_delta=skew_data.get("otm_put_delta", float("nan")),
+                    otm_call_delta=skew_data.get("otm_call_delta", float("nan")),
+                    rv_edge_put=skew_data.get("rv_edge_put", float("nan")),
+                    rv_edge_call=skew_data.get("rv_edge_call", float("nan")),
+                    net_delta=pos_greeks.get("delta", float("nan")),
+                    net_gamma=pos_greeks.get("gamma", float("nan")),
+                    net_vega=pos_greeks.get("vega", float("nan")),
+                    net_theta=pos_greeks.get("theta", float("nan")),
                     put_skew=skew_data.get("put_skew", float("nan")),
                     call_skew=skew_data.get("call_skew", float("nan")),
                     skew_signal=skew_data["skew_signal"],
@@ -622,6 +694,11 @@ def to_markdown(df: pd.DataFrame, args: argparse.Namespace) -> str:
         "",
     ]
 
+    lines += ["", "## Greeks Snapshot", "", "| Symbol | Δ | Γ | Vega | Theta |", "|--------|---|---|------|-------|"]
+    for _, r in view.head(10).iterrows():
+        d=r.to_dict()
+        lines.append(f"| {d.get('symbol','')} | {float(d.get('net_delta',float("nan"))):.3f} | {float(d.get('net_gamma',float("nan"))):.3f} | {float(d.get('net_vega',float("nan"))):.3f} | {float(d.get('net_theta',float("nan"))):.3f} |")
+
     lines += [
         "",
         "## Notes",
@@ -644,9 +721,10 @@ def main() -> int:
     parser.add_argument("--debug", action="store_true", help="Print scan diagnostics (counts and skip reasons)")
     parser.add_argument("--capital", type=float, default=None)
     parser.add_argument("--default-alloc", type=float, default=0.04)
+    parser.add_argument("--portfolio-dd", type=float, default=0.0)
     args = parser.parse_args()
 
-    df = scan(args.window_days, args.top_n, args.min_oi, args.min_vol, debug=args.debug, capital=args.capital, default_alloc=args.default_alloc)
+    df = scan(args.window_days, args.top_n, args.min_oi, args.min_vol, debug=args.debug, capital=args.capital, default_alloc=args.default_alloc, portfolio_dd=args.portfolio_dd)
 
     out_csv = Path(args.out_csv)
     out_md = Path(args.out_md)

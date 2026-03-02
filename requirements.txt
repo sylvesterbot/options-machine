@@ -2,3 +2,4 @@ openbb
 yfinance
 pandas
 numpy
+scipy

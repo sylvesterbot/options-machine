@@ -22,6 +22,7 @@ def run_pipeline(args: argparse.Namespace) -> pd.DataFrame:
         debug=args.debug,
         capital=args.capital,
         default_alloc=args.default_alloc,
+        portfolio_dd=args.portfolio_dd,
     )
 
     out_csv = Path(args.out_csv)
@@ -66,6 +67,7 @@ def main() -> int:
     parser.add_argument("--watchlist-jsonl", default="data/watchlist.jsonl")
     parser.add_argument("--capital", type=float, default=None)
     parser.add_argument("--default-alloc", type=float, default=0.04)
+    parser.add_argument("--portfolio-dd", type=float, default=0.0)
     args = parser.parse_args()
 
     run_pipeline(args)
