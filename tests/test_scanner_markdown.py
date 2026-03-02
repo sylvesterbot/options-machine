@@ -14,7 +14,7 @@ class ScannerMarkdownTests(unittest.TestCase):
         self.assertIn("move_ratio", fields)
 
     def test_markdown_contains_move_ratio_column(self) -> None:
-        args = Namespace(window_days=14, min_oi=0, min_vol=0)
+        args = Namespace(window_days=14, min_oi=0, min_vol=0, capital=100000)
         df = pd.DataFrame(
             [
                 {
@@ -38,6 +38,8 @@ class ScannerMarkdownTests(unittest.TestCase):
                     "avg_hist_move": 0.04,
                     "max_hist_move": 0.06,
                     "move_ratio": 1.25,
+                    "suggested_allocation_pct": 0.05,
+                    "suggested_allocation_usd": 5000.0,
                 }
             ]
         )
@@ -46,6 +48,8 @@ class ScannerMarkdownTests(unittest.TestCase):
 
         self.assertIn("MvRatio", md)
         self.assertIn("1.25", md)
+        self.assertIn("Alloc%", md)
+        self.assertIn("Alloc$", md)
 
 
 if __name__ == "__main__":

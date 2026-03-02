@@ -20,7 +20,9 @@ def format_daily_alert(df: pd.DataFrame) -> str:
             d = r.to_dict()
             iv_rv = f"IV/RV: {d['iv_rv_ratio']:.2f}" if not np.isnan(d.get("iv_rv_ratio", float("nan"))) else ""
             ff = f"FF: {d.get('ff_best', d.get('forward_factor', float("nan"))):.2f}" if not np.isnan(d.get("ff_best", d.get("forward_factor", float("nan")))) else ""
-            parts = [p for p in [iv_rv, ff] if p]
+            alloc = d.get("suggested_allocation_pct", float("nan"))
+            alloc_txt = f"Alloc: {alloc*100:.1f}%" if not np.isnan(alloc) else ""
+            parts = [p for p in [iv_rv, ff, alloc_txt] if p]
             advice = d.get("advice", "")
             lines.append(f"  • {d['symbol']} [{d['strategies']}] — {' | '.join(parts)} | Earnings {d['earnings_date']}")
             if advice:
@@ -33,7 +35,9 @@ def format_daily_alert(df: pd.DataFrame) -> str:
             d = r.to_dict()
             iv_rv = f"IV/RV: {d['iv_rv_ratio']:.2f}" if not np.isnan(d.get("iv_rv_ratio", float("nan"))) else ""
             advice = d.get("advice", "")
-            lines.append(f"  • {d['symbol']} [{d['strategies']}] — {iv_rv} | Earnings {d['earnings_date']}")
+            alloc = d.get("suggested_allocation_pct", float("nan"))
+            alloc_txt = f" | Alloc: {alloc*100:.1f}%" if not np.isnan(alloc) else ""
+            lines.append(f"  • {d['symbol']} [{d['strategies']}] — {iv_rv}{alloc_txt} | Earnings {d['earnings_date']}")
             if advice:
                 lines.append(f"    ↳ {advice}")
         lines.append("")

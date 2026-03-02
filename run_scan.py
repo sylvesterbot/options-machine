@@ -14,7 +14,15 @@ from watchlist import append_watchlist
 
 
 def run_pipeline(args: argparse.Namespace) -> pd.DataFrame:
-    df = scan(args.window_days, args.top_n, args.min_oi, args.min_vol, debug=args.debug)
+    df = scan(
+        args.window_days,
+        args.top_n,
+        args.min_oi,
+        args.min_vol,
+        debug=args.debug,
+        capital=args.capital,
+        default_alloc=args.default_alloc,
+    )
 
     out_csv = Path(args.out_csv)
     out_md = Path(args.out_md)
@@ -56,6 +64,8 @@ def main() -> int:
     parser.add_argument("--out-md", default="outputs/openbb_earnings_iv_scan.md")
     parser.add_argument("--tracker-jsonl", default="outputs/backtest_tracker.jsonl")
     parser.add_argument("--watchlist-jsonl", default="data/watchlist.jsonl")
+    parser.add_argument("--capital", type=float, default=None)
+    parser.add_argument("--default-alloc", type=float, default=0.04)
     args = parser.parse_args()
 
     run_pipeline(args)

@@ -36,6 +36,8 @@ class RunScanEntrypointTests(unittest.TestCase):
                     "momentum_pct": 0.01,
                     "momentum_dir": "BULLISH",
                     "strategies": "A",
+                    "suggested_allocation_pct": 0.04,
+                    "suggested_allocation_usd": 4000.0,
                 }
             ]
         )
@@ -53,6 +55,8 @@ class RunScanEntrypointTests(unittest.TestCase):
                 out_md=str(base / "outputs" / "openbb_earnings_iv_scan.md"),
                 tracker_jsonl=str(base / "outputs" / "backtest_tracker.jsonl"),
                 watchlist_jsonl=str(base / "data" / "watchlist.jsonl"),
+                capital=100000.0,
+                default_alloc=0.04,
             )
 
             with (

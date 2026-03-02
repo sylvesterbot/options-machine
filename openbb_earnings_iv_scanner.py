@@ -72,6 +72,8 @@ class ScanRow:
     earnings_distortion_flag: bool = False
     ff_note: str = "X_EARN"
     advice: str = ""
+    suggested_allocation_pct: float = 0.04
+    suggested_allocation_usd: float = float("nan")
     # Strategy C: Skew
     put_skew: float = float("nan")
     call_skew: float = float("nan")
@@ -331,7 +333,34 @@ def compute_earnings_distortion(earnings_date: dt.date, pair_expiries: dict[str,
     distorted = earnings_date <= front_exp
     return distorted, ("EARNINGS_IN_WINDOW" if distorted else "X_EARN")
 
-def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = False) -> pd.DataFrame:
+
+
+def compute_suggested_allocation(
+    strategies: str,
+    ff_signal: str,
+    earnings_distortion_flag: bool,
+    momentum_dir: str,
+    skew_signal: str,
+    capital: float | None = None,
+    default_alloc: float = 0.04,
+) -> tuple[float, float]:
+    alloc = float(default_alloc)
+    strat_set = {x.strip() for x in (strategies or "").split(",") if x.strip()}
+
+    if "B" in strat_set and ff_signal == "STRONG" and not earnings_distortion_flag:
+        alloc += 0.01
+    if "A" in strat_set:
+        alloc -= 0.01
+    if ("C" in strat_set) and (momentum_dir in {"BULLISH", "BEARISH"}) and (skew_signal != "NONE"):
+        alloc += 0.005
+    if earnings_distortion_flag and "B" in strat_set:
+        alloc -= 0.01
+
+    alloc = min(0.08, max(0.02, alloc))
+    usd = float("nan") if capital is None else float(capital) * alloc
+    return float(alloc), float(usd)
+
+def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = False, capital: float | None = None, default_alloc: float = 0.04) -> pd.DataFrame:
     obb = OpenBBClient()
     tickers = obb.get_sp500_universe()
     start = dt.date.today()
@@ -415,6 +444,17 @@ def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = 
             if skew_data["skew_signal"] != "NONE" and mom_data["momentum_dir"] != "NEUTRAL":
                 strats.append("C")
 
+            strategies_joined = ",".join(strats) if strats else ""
+            alloc_pct, alloc_usd = compute_suggested_allocation(
+                strategies=strategies_joined,
+                ff_signal=ff_data.get("ff_signal", "NONE"),
+                earnings_distortion_flag=distorted,
+                momentum_dir=mom_data["momentum_dir"],
+                skew_signal=skew_data["skew_signal"],
+                capital=capital,
+                default_alloc=default_alloc,
+            )
+
             rows.append(
                 ScanRow(
                     symbol=symbol,
@@ -442,13 +482,15 @@ def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = 
                     days_to_earnings=days_to_earnings,
                     earnings_distortion_flag=distorted,
                     ff_note=ff_note,
-                    advice=build_advice(",".join(strats) if strats else "", ff_note=ff_note),
+                    advice=build_advice(strategies_joined, ff_note=ff_note),
+                    suggested_allocation_pct=alloc_pct,
+                    suggested_allocation_usd=alloc_usd,
                     put_skew=skew_data.get("put_skew", float("nan")),
                     call_skew=skew_data.get("call_skew", float("nan")),
                     skew_signal=skew_data["skew_signal"],
                     momentum_pct=mom_data["momentum_pct"],
                     momentum_dir=mom_data["momentum_dir"],
-                    strategies=",".join(strats) if strats else "",
+                    strategies=strategies_joined,
                 )
             )
         except Exception as exc:
@@ -517,8 +559,8 @@ def to_markdown(df: pd.DataFrame, args: argparse.Namespace) -> str:
     lines += [
         "## Top Candidates",
         "",
-        "| Symbol | Earnings | Spot | IV/RV | MvRatio | FFbest | FFpair | FFnote | Distorted? | Skew | Mom | Strategies |",
-        "|--------|----------|------|-------|---------|--------|--------|--------|------------|------|-----|------------|",
+        "| Symbol | Earnings | Spot | IV/RV | MvRatio | FFbest | FFpair | FFnote | Distorted? | Alloc% | Alloc$ | Skew | Mom | Strategies |",
+        "|--------|----------|------|-------|---------|--------|--------|--------|------------|--------|--------|------|-----|------------|",
     ]
     for _, r in view.iterrows():
         d = r.to_dict()
@@ -531,10 +573,14 @@ def to_markdown(df: pd.DataFrame, args: argparse.Namespace) -> str:
         ff_pair = d.get("ff_best_pair", "-")
         ff_note = d.get("ff_note", "-")
         distorted = "Y" if bool(d.get("earnings_distortion_flag", False)) else "N"
+        alloc_pct_v = d.get("suggested_allocation_pct", float("nan"))
+        alloc_pct = f"{alloc_pct_v*100:.1f}%" if not np.isnan(alloc_pct_v) else "-"
+        alloc_usd_v = d.get("suggested_allocation_usd", float("nan"))
+        alloc_usd = f"${alloc_usd_v:,.0f}" if (hasattr(args, "capital") and getattr(args, "capital", None) is not None and not np.isnan(alloc_usd_v)) else "-"
         ps = f"{d.get('put_skew', 0):.2f}" if not np.isnan(d.get("put_skew", float("nan"))) else "-"
         mom = d.get("momentum_dir", "?")[:4]
         strats = d.get("strategies", "") or "-"
-        lines.append(f"| {sym} | {edate} | {spot} | {iv_rv} | {mv_ratio} | {ff} | {ff_pair} | {ff_note} | {distorted} | {ps} | {mom} | {strats} |")
+        lines.append(f"| {sym} | {edate} | {spot} | {iv_rv} | {mv_ratio} | {ff} | {ff_pair} | {ff_note} | {distorted} | {alloc_pct} | {alloc_usd} | {ps} | {mom} | {strats} |")
 
     lines += ["", "## Per-Row Advice", ""]
     for _, r in view.iterrows():
@@ -571,9 +617,11 @@ def main() -> int:
     parser.add_argument("--out-md", default="outputs/openbb_earnings_iv_scan.md")
     parser.add_argument("--tracker-jsonl", default="outputs/backtest_tracker.jsonl")
     parser.add_argument("--debug", action="store_true", help="Print scan diagnostics (counts and skip reasons)")
+    parser.add_argument("--capital", type=float, default=None)
+    parser.add_argument("--default-alloc", type=float, default=0.04)
     args = parser.parse_args()
 
-    df = scan(args.window_days, args.top_n, args.min_oi, args.min_vol, debug=args.debug)
+    df = scan(args.window_days, args.top_n, args.min_oi, args.min_vol, debug=args.debug, capital=args.capital, default_alloc=args.default_alloc)
 
     out_csv = Path(args.out_csv)
     out_md = Path(args.out_md)
