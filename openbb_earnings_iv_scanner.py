@@ -335,6 +335,24 @@ def compute_earnings_distortion(earnings_date: dt.date, pair_expiries: dict[str,
 
 
 
+
+
+def load_kelly_calibration(path: str = "data/kelly_calibration.json") -> dict[str, float]:
+    p = Path(path)
+    if not p.exists():
+        return {}
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    out: dict[str, float] = {}
+    for k, v in data.items():
+        try:
+            out[str(k)] = float(v)
+        except Exception:
+            continue
+    return out
+
 def compute_suggested_allocation(
     strategies: str,
     ff_signal: str,
@@ -387,6 +405,7 @@ def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = 
         print(f"[debug] earnings_rows={len(earnings)} range={start}..{end}")
 
     rows: list[ScanRow] = []
+    kelly_map = load_kelly_calibration()
     skip: dict[str, int] = {
         "price_empty": 0,
         "no_atm": 0,
@@ -445,6 +464,12 @@ def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = 
                 strats.append("C")
 
             strategies_joined = ",".join(strats) if strats else ""
+            strategy_for_alloc = strategies_joined or "NONE"
+            mapped_default = default_alloc
+            for key in (strategy_for_alloc, *(x for x in strategy_for_alloc.split(",") if x)):
+                if key in kelly_map:
+                    mapped_default = float(kelly_map[key])
+                    break
             alloc_pct, alloc_usd = compute_suggested_allocation(
                 strategies=strategies_joined,
                 ff_signal=ff_data.get("ff_signal", "NONE"),
@@ -452,7 +477,7 @@ def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = 
                 momentum_dir=mom_data["momentum_dir"],
                 skew_signal=skew_data["skew_signal"],
                 capital=capital,
-                default_alloc=default_alloc,
+                default_alloc=mapped_default,
             )
 
             rows.append(
