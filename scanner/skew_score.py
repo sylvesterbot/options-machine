@@ -6,8 +6,8 @@ import pandas as pd
 from scanner.greeks import enrich_chain_with_greeks
 
 
-def compute_skew_score(chain: pd.DataFrame, spot: float, rv30: float) -> dict:
-    today = dt.date.today()
+def compute_skew_score(chain: pd.DataFrame, spot: float, rv30: float, as_of_date: dt.date | None = None) -> dict:
+    today = as_of_date or dt.date.today()
     expiries = sorted([e for e in chain["expiration"].unique() if e > today])
     EMPTY = {
         "atm_iv": float("nan"),

@@ -516,7 +516,7 @@ def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = 
             chain_g = enrich_chain_with_greeks(chain, spot=spot)
             pos_greeks = compute_position_greeks(chain_g)
             # Strategy C: Skew
-            skew_data = compute_skew_score(chain_g, spot, rv30)
+            skew_data = compute_skew_score(chain_g, spot, rv30, as_of_date=start)
             # Momentum
             mom_data = compute_momentum(px)
 

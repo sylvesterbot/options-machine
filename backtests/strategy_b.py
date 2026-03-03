@@ -61,10 +61,13 @@ def simulate_strategy_b(
     iv_rv_max: float = 2.0,
     use_kelly: bool = False,
     initial_capital: float = 100000.0,
+    stop_loss_pct: float = -0.20,
+    max_concurrent: int = 1,
+    slippage_pct: float = 0.0,
 ) -> pd.DataFrame:
     px = provider.get_underlying_prices(symbol, start, end).copy()
     if px.empty:
-        return pd.DataFrame(columns=["symbol", "entry_date", "exit_date", "entry_price", "exit_price", "return_pct", "ff_entry", "ff_exit", "ff_pair"])
+        return pd.DataFrame(columns=["symbol", "entry_date", "exit_date", "entry_price", "exit_price", "return_pct", "ff_entry", "ff_exit", "ff_pair", "stopped_out"])
     px["date"] = pd.to_datetime(px["date"]).dt.date
     px = px.sort_values("date").reset_index(drop=True)
 
@@ -73,7 +76,13 @@ def simulate_strategy_b(
     capital = float(initial_capital)
     peak_capital = float(initial_capital)
     i = 0
+    max_concurrent = max(1, int(max_concurrent))
+    slippage_pct = max(0.0, float(slippage_pct))
     while i < len(px) - 1:
+        if max_concurrent < 1:
+            i += 1
+            continue
+
         entry_date = px.loc[i, "date"]
         entry_spot = float(px.loc[i, "close"])
         chain = provider.get_options_chain(symbol, entry_date)
@@ -109,13 +118,16 @@ def simulate_strategy_b(
             i += 1
             continue
 
-        entry_price = entry_back - entry_front  # debit calendar
+        raw_entry_price = entry_back - entry_front  # debit calendar
+        entry_price = raw_entry_price * (1.0 + slippage_pct)
         if entry_price <= 0:
             i += 1
             continue
 
         exit_idx = min(i + holding_days, len(px) - 1)
         ff_exit_val = float("nan")
+        stopped_out = False
+
         if exit_mode == "mean_revert":
             for j in range(i + 1, min(i + holding_days, len(px) - 1) + 1):
                 d = px.loc[j, "date"]
@@ -128,6 +140,26 @@ def simulate_strategy_b(
                     exit_idx = j
                     ff_exit_val = ff2v
                     break
+
+        # Intra-trade daily stop-loss check
+        last_check = min(i + holding_days, len(px) - 1)
+        for j in range(i + 1, last_check + 1):
+            d = px.loc[j, "date"]
+            c_daily = provider.get_options_chain(symbol, d)
+            if c_daily is None or len(c_daily) == 0:
+                continue
+            try:
+                daily_front = _mid_price(c_daily, front.expiration, front.strike)
+                daily_back = _mid_price(c_daily, back.expiration, back.strike)
+            except Exception:
+                continue
+            raw_exit_daily = daily_back - daily_front
+            exit_daily = raw_exit_daily * (1.0 - slippage_pct)
+            ret_daily = float((exit_daily - entry_price) / entry_price)
+            if ret_daily <= float(stop_loss_pct):
+                exit_idx = j
+                stopped_out = True
+                break
 
         exit_date = px.loc[exit_idx, "date"]
         exit_chain = provider.get_options_chain(symbol, exit_date)
@@ -142,7 +174,8 @@ def simulate_strategy_b(
             i = exit_idx + 1
             continue
 
-        exit_price = exit_back - exit_front
+        raw_exit_price = exit_back - exit_front
+        exit_price = raw_exit_price * (1.0 - slippage_pct)
         ret = float((exit_price - entry_price) / entry_price)
 
         # Portfolio sizing
@@ -170,6 +203,7 @@ def simulate_strategy_b(
                 "ff_entry": ff_best,
                 "ff_exit": ff_exit_val,
                 "ff_pair": ff.get("ff_best_pair", "NONE"),
+                "stopped_out": bool(stopped_out),
             }
         )
         i = exit_idx + 1
@@ -178,22 +212,26 @@ def simulate_strategy_b(
 
 
 def summarize_trade_log(trades: pd.DataFrame) -> dict:
+    empty = {"trades": 0, "total_return": 0.0, "avg_return": 0.0, "volatility": 0.0, "max_drawdown": 0.0, "sharpe": 0.0}
     if trades.empty or "return_pct" not in trades.columns:
-        return {"trades": 0, "total_return": 0.0, "avg_return": 0.0, "volatility": 0.0, "max_drawdown": 0.0}
+        return empty
 
     col = "portfolio_return" if "portfolio_return" in trades.columns else "return_pct"
     r = pd.to_numeric(trades[col], errors="coerce").dropna()
     if r.empty:
-        return {"trades": 0, "total_return": 0.0, "avg_return": 0.0, "volatility": 0.0, "max_drawdown": 0.0}
+        return empty
 
     equity = (1 + r).cumprod()
     peak = equity.cummax()
     dd = (equity / peak) - 1.0
+    vol = float(r.std(ddof=1)) if len(r) > 1 else 0.0
+    sharpe = float((r.mean() / vol) * np.sqrt(252)) if vol > 0 else 0.0
 
     return {
         "trades": int(len(r)),
         "total_return": float(equity.iloc[-1] - 1.0),
         "avg_return": float(r.mean()),
-        "volatility": float(r.std(ddof=1)) if len(r) > 1 else 0.0,
+        "volatility": vol,
         "max_drawdown": float(dd.min()),
+        "sharpe": sharpe,
     }

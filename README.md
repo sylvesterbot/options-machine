@@ -113,22 +113,31 @@ Supported provider names:
 
 ### Lambdaclass data-v1 setup
 
-1. Download/extract the data-v1 release files into a local folder, e.g.:
+Use one local folder containing extracted CSVs. In this repo, both of these roots are commonly used:
+- `data/lambdaclass-data-v1`
+- `data/lambdaclass_data_v1/extracted_spy_2020_2024`
+
+Example:
 
 ```bash
-mkdir -p data/lambdaclass-data-v1
+mkdir -p data/lambdaclass_data_v1/extracted_spy_2020_2024
 # copy extracted CSVs into that folder
 ```
 
-2. Expected files:
+Expected files under `--provider-root`:
 - `underlying_prices.csv` (required)
 - `options_eod.csv` (required)
 - `earnings_calendar.csv` (optional)
 
-3. Run walk-forward with provider=lambdaclass:
+Run walk-forward with provider=lambdaclass:
 
 ```bash
-python backtests/run_walkforward.py   --provider lambdaclass   --provider-root data/lambdaclass-data-v1   --start 2018-01-01   --end 2024-12-31   --out outputs/walkforward_trades.csv
+python backtests/run_walkforward.py \
+  --provider lambdaclass \
+  --provider-root data/lambdaclass_data_v1/extracted_spy_2020_2024 \
+  --start 2018-01-01 \
+  --end 2024-12-31 \
+  --out outputs/walkforward_trades.csv
 ```
 
 

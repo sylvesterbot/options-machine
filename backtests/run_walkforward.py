@@ -50,6 +50,8 @@ def run_walkforward(
     step_years: int = 1,
     iv_rv_max: float = 2.0,
     use_kelly: bool = False,
+    stop_loss: float = -0.20,
+    slippage: float = 0.0,
 ) -> pd.DataFrame:
     provider = resolve_provider(provider_name, root_dir=provider_root)
     windows = build_walkforward_windows(start, end, train_years=train_years, test_years=test_years, step_years=step_years)
@@ -69,6 +71,8 @@ def run_walkforward(
                     exit_mode=exit_mode,
                     iv_rv_max=iv_rv_max,
                     use_kelly=use_kelly,
+                    stop_loss_pct=stop_loss,
+                    slippage_pct=slippage,
                 )
                 if not tdf.empty:
                     tdf = tdf.copy()
@@ -102,6 +106,8 @@ def main() -> int:
     parser.add_argument("--step-years", type=int, default=1)
     parser.add_argument("--iv-rv-max", type=float, default=2.0, help="Skip trades when IV/RV exceeds this (regime filter)")
     parser.add_argument("--use-kelly", action="store_true", help="Enable Kelly position sizing")
+    parser.add_argument("--stop-loss", type=float, default=-0.20, help="Intra-trade stop loss threshold (return), e.g. -0.20")
+    parser.add_argument("--slippage", type=float, default=0.0, help="Slippage applied at entry/exit pricing")
     args = parser.parse_args()
 
     start = dt.date.fromisoformat(args.start)
@@ -126,10 +132,12 @@ def main() -> int:
         step_years=args.step_years,
         iv_rv_max=args.iv_rv_max,
         use_kelly=args.use_kelly,
+        stop_loss=args.stop_loss,
+        slippage=args.slippage,
     )
     summary = summarize_trade_log(df)
     print(f"walkforward done. provider={args.provider} strategy={args.strategy} trades={len(df)} out={args.out}")
-    print(f"summary: total_return={summary['total_return']:.4f} avg_return={summary['avg_return']:.4f} vol={summary['volatility']:.4f} max_dd={summary['max_drawdown']:.4f}")
+    print(f"summary: total_return={summary['total_return']:.4f} avg_return={summary['avg_return']:.4f} vol={summary['volatility']:.4f} max_dd={summary['max_drawdown']:.4f} sharpe={summary['sharpe']:.4f}")
     return 0
 
 
