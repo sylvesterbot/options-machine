@@ -48,6 +48,8 @@ def run_walkforward(
     train_years: int = 2,
     test_years: int = 2,
     step_years: int = 1,
+    iv_rv_max: float = 2.0,
+    use_kelly: bool = False,
 ) -> pd.DataFrame:
     provider = resolve_provider(provider_name, root_dir=provider_root)
     windows = build_walkforward_windows(start, end, train_years=train_years, test_years=test_years, step_years=step_years)
@@ -65,6 +67,8 @@ def run_walkforward(
                     ff_threshold=ff_threshold,
                     holding_days=holding_days,
                     exit_mode=exit_mode,
+                    iv_rv_max=iv_rv_max,
+                    use_kelly=use_kelly,
                 )
                 if not tdf.empty:
                     tdf = tdf.copy()
@@ -89,18 +93,23 @@ def main() -> int:
     parser.add_argument("--provider", default="mock", choices=["mock", "lambdaclass", "polygon", "thetadata", "eodhd"])
     parser.add_argument("--provider-root", default="data/lambdaclass-data-v1")
     parser.add_argument("--strategy", default="B", choices=["B"])
-    parser.add_argument("--symbols", default="SPY")
+    parser.add_argument("--symbols", default="SPY", help="Comma-separated symbols. VID-4 strategy designed for SPY. IWM/QQQ are out-of-sample.")
     parser.add_argument("--ff-threshold", type=float, default=0.2)
     parser.add_argument("--holding-days", type=int, default=10)
     parser.add_argument("--exit-mode", default="fixed", choices=["fixed", "mean_revert"])
     parser.add_argument("--train-years", type=int, default=2)
     parser.add_argument("--test-years", type=int, default=2)
     parser.add_argument("--step-years", type=int, default=1)
+    parser.add_argument("--iv-rv-max", type=float, default=2.0, help="Skip trades when IV/RV exceeds this (regime filter)")
+    parser.add_argument("--use-kelly", action="store_true", help="Enable Kelly position sizing")
     args = parser.parse_args()
 
     start = dt.date.fromisoformat(args.start)
     end = dt.date.fromisoformat(args.end)
     symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+    for sym in symbols:
+        if sym != "SPY":
+            print(f"WARNING: {sym} is out-of-sample for VID-4 strategy — results may not match SPY performance characteristics")
     df = run_walkforward(
         start,
         end,
@@ -115,6 +124,8 @@ def main() -> int:
         train_years=args.train_years,
         test_years=args.test_years,
         step_years=args.step_years,
+        iv_rv_max=args.iv_rv_max,
+        use_kelly=args.use_kelly,
     )
     summary = summarize_trade_log(df)
     print(f"walkforward done. provider={args.provider} strategy={args.strategy} trades={len(df)} out={args.out}")

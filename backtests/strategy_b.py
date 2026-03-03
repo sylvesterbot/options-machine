@@ -7,6 +7,8 @@ import pandas as pd
 
 from scanner.forward_factor import compute_forward_factor
 
+from backtests.kelly import compute_kelly_fraction
+
 
 @dataclass
 class CalendarLeg:
@@ -56,6 +58,9 @@ def simulate_strategy_b(
     holding_days: int = 10,
     exit_mode: str = "fixed",  # fixed | mean_revert
     mean_revert_threshold: float = 0.05,
+    iv_rv_max: float = 2.0,
+    use_kelly: bool = False,
+    initial_capital: float = 100000.0,
 ) -> pd.DataFrame:
     px = provider.get_underlying_prices(symbol, start, end).copy()
     if px.empty:
@@ -64,6 +69,9 @@ def simulate_strategy_b(
     px = px.sort_values("date").reset_index(drop=True)
 
     trades = []
+    trade_returns: list[float] = []
+    capital = float(initial_capital)
+    peak_capital = float(initial_capital)
     i = 0
     while i < len(px) - 1:
         entry_date = px.loc[i, "date"]
@@ -77,6 +85,21 @@ def simulate_strategy_b(
         if np.isnan(ff_best) or ff_best < ff_threshold:
             i += 1
             continue
+
+        # Regime filter: skip extreme IV relative to recent realized vol (backwardation trap)
+        iv_30 = float(ff.get("front_iv", float("nan")))
+        if not np.isnan(iv_30) and iv_rv_max is not None and iv_rv_max > 0:
+            px_window = px.iloc[max(0, i - 30) : i + 1]
+            if len(px_window) > 5:
+                log_rets = np.log(px_window["close"] / px_window["close"].shift(1)).dropna()
+                rv30 = float(log_rets.std() * np.sqrt(252)) if len(log_rets) > 2 else 0.0
+            else:
+                rv30 = 0.0
+            if rv30 > 0:
+                iv_rv = iv_30 / rv30
+                if iv_rv > iv_rv_max:
+                    i += 1
+                    continue
 
         try:
             front, back = _select_legs(chain, entry_spot, ff.get("ff_best_pair", "NONE"), ff.get("pair_expiries", {}))
@@ -120,7 +143,18 @@ def simulate_strategy_b(
             continue
 
         exit_price = exit_back - exit_front
-        ret = (exit_price - entry_price) / entry_price
+        ret = float((exit_price - entry_price) / entry_price)
+
+        # Portfolio sizing
+        alloc = 1.0
+        portfolio_dd = (capital / peak_capital - 1.0) if peak_capital > 0 else 0.0
+        if use_kelly:
+            alloc = float(compute_kelly_fraction(returns=trade_returns, portfolio_dd=portfolio_dd))
+
+        portfolio_return = alloc * ret
+        capital *= (1.0 + portfolio_return)
+        peak_capital = max(peak_capital, capital)
+        trade_returns.append(ret)
 
         trades.append(
             {
@@ -130,6 +164,9 @@ def simulate_strategy_b(
                 "entry_price": float(entry_price),
                 "exit_price": float(exit_price),
                 "return_pct": float(ret),
+                "alloc": float(alloc),
+                "portfolio_return": float(portfolio_return),
+                "capital": float(capital),
                 "ff_entry": ff_best,
                 "ff_exit": ff_exit_val,
                 "ff_pair": ff.get("ff_best_pair", "NONE"),
@@ -144,7 +181,8 @@ def summarize_trade_log(trades: pd.DataFrame) -> dict:
     if trades.empty or "return_pct" not in trades.columns:
         return {"trades": 0, "total_return": 0.0, "avg_return": 0.0, "volatility": 0.0, "max_drawdown": 0.0}
 
-    r = pd.to_numeric(trades["return_pct"], errors="coerce").dropna()
+    col = "portfolio_return" if "portfolio_return" in trades.columns else "return_pct"
+    r = pd.to_numeric(trades[col], errors="coerce").dropna()
     if r.empty:
         return {"trades": 0, "total_return": 0.0, "avg_return": 0.0, "volatility": 0.0, "max_drawdown": 0.0}
 

@@ -15,6 +15,9 @@ class LambdaClassProviderTests(unittest.TestCase):
         chain = provider.get_options_chain("SPY", dt.date(2020, 1, 3))
         self.assertGreaterEqual(len(chain), 4)
         self.assertIn("option_type", chain.columns)
+        # provider should expose optional extra columns when present
+        for c in ["implied_volatility", "delta", "gamma", "theta", "vega", "open_interest", "volume"]:
+            self.assertIn(c, chain.columns)
 
         cal = provider.get_earnings_calendar(dt.date(2020, 1, 1), dt.date(2020, 12, 31))
         self.assertEqual(len(cal), 1)
