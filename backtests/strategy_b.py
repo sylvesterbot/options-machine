@@ -212,8 +212,16 @@ def simulate_strategy_b(
     return pd.DataFrame(trades)
 
 
-def summarize_trade_log(trades: pd.DataFrame, trades_per_year: float = 12.0) -> dict:
-    empty = {"trades": 0, "total_return": 0.0, "avg_return": 0.0, "volatility": 0.0, "max_drawdown": 0.0, "sharpe": 0.0}
+def summarize_trade_log(trades: pd.DataFrame) -> dict:
+    empty = {
+        "trades": 0,
+        "total_return": 0.0,
+        "avg_return": 0.0,
+        "volatility": 0.0,
+        "max_drawdown": 0.0,
+        "trades_per_year": 0.0,
+        "sharpe": 0.0,
+    }
     if trades.empty or "return_pct" not in trades.columns:
         return empty
 
@@ -221,6 +229,18 @@ def summarize_trade_log(trades: pd.DataFrame, trades_per_year: float = 12.0) -> 
     r = pd.to_numeric(trades[col], errors="coerce").dropna()
     if r.empty:
         return empty
+
+    trades_per_year = 12.0
+    if "entry_date" in trades.columns and "exit_date" in trades.columns:
+        entry = pd.to_datetime(trades["entry_date"], errors="coerce")
+        exit_ = pd.to_datetime(trades["exit_date"], errors="coerce")
+        if entry.notna().any() and exit_.notna().any():
+            start = entry.min()
+            end = exit_.max()
+            if pd.notna(start) and pd.notna(end):
+                span_days = max(1.0, float((end - start).days))
+                years = span_days / 365.25
+                trades_per_year = float(len(r) / years) if years > 0 else 12.0
 
     equity = (1 + r).cumprod()
     peak = equity.cummax()
@@ -235,5 +255,6 @@ def summarize_trade_log(trades: pd.DataFrame, trades_per_year: float = 12.0) -> 
         "avg_return": float(r.mean()),
         "volatility": vol,
         "max_drawdown": float(dd.min()),
+        "trades_per_year": float(trades_per_year),
         "sharpe": sharpe,
     }

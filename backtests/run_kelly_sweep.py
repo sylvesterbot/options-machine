@@ -21,8 +21,8 @@ def main() -> int:
     p.add_argument("--start", default="2020-01-01")
     p.add_argument("--end", default="2024-12-31")
     p.add_argument("--symbols", default="SPY")
-    p.add_argument("--out", default="outputs/kelly_sweep.csv")
-    p.add_argument("--grid", default="10,20,30,50,80")
+    p.add_argument("--out", default="outputs/kelly_sweep_results.csv")
+    p.add_argument("--grid", default="10,15,30,50")
     args = p.parse_args()
 
     root = Path(args.provider_root)
