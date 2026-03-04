@@ -64,6 +64,7 @@ def simulate_strategy_b(
     stop_loss_pct: float = -0.20,
     max_concurrent: int = 1,
     slippage_pct: float = 0.0,
+    kelly_min_trades: int = 50,
 ) -> pd.DataFrame:
     px = provider.get_underlying_prices(symbol, start, end).copy()
     if px.empty:
@@ -142,7 +143,7 @@ def simulate_strategy_b(
                     break
 
         # Intra-trade daily stop-loss check
-        last_check = min(i + holding_days, len(px) - 1)
+        last_check = min(exit_idx, len(px) - 1)
         for j in range(i + 1, last_check + 1):
             d = px.loc[j, "date"]
             c_daily = provider.get_options_chain(symbol, d)
@@ -182,7 +183,7 @@ def simulate_strategy_b(
         alloc = 1.0
         portfolio_dd = (capital / peak_capital - 1.0) if peak_capital > 0 else 0.0
         if use_kelly:
-            alloc = float(compute_kelly_fraction(returns=trade_returns, portfolio_dd=portfolio_dd))
+            alloc = float(compute_kelly_fraction(returns=trade_returns, min_trades=kelly_min_trades, portfolio_dd=portfolio_dd))
 
         portfolio_return = alloc * ret
         capital *= (1.0 + portfolio_return)
@@ -211,7 +212,7 @@ def simulate_strategy_b(
     return pd.DataFrame(trades)
 
 
-def summarize_trade_log(trades: pd.DataFrame) -> dict:
+def summarize_trade_log(trades: pd.DataFrame, trades_per_year: float = 12.0) -> dict:
     empty = {"trades": 0, "total_return": 0.0, "avg_return": 0.0, "volatility": 0.0, "max_drawdown": 0.0, "sharpe": 0.0}
     if trades.empty or "return_pct" not in trades.columns:
         return empty
@@ -225,7 +226,8 @@ def summarize_trade_log(trades: pd.DataFrame) -> dict:
     peak = equity.cummax()
     dd = (equity / peak) - 1.0
     vol = float(r.std(ddof=1)) if len(r) > 1 else 0.0
-    sharpe = float((r.mean() / vol) * np.sqrt(252)) if vol > 0 else 0.0
+    ann_factor = float(np.sqrt(max(1e-9, trades_per_year)))
+    sharpe = float((r.mean() / vol) * ann_factor) if vol > 0 else 0.0
 
     return {
         "trades": int(len(r)),

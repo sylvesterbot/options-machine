@@ -11,6 +11,7 @@ if __package__ in (None, ""):
 
 from backtests.providers.registry import resolve_provider
 from backtests.strategy_b import simulate_strategy_b, summarize_trade_log
+from backtests.strategy_c import simulate_strategy_c
 
 
 def _add_years(d: dt.date, years: int) -> dt.date:
@@ -52,6 +53,7 @@ def run_walkforward(
     use_kelly: bool = False,
     stop_loss: float = -0.20,
     slippage: float = 0.0,
+    kelly_min_trades: int = 50,
 ) -> pd.DataFrame:
     provider = resolve_provider(provider_name, root_dir=provider_root)
     windows = build_walkforward_windows(start, end, train_years=train_years, test_years=test_years, step_years=step_years)
@@ -73,11 +75,26 @@ def run_walkforward(
                     use_kelly=use_kelly,
                     stop_loss_pct=stop_loss,
                     slippage_pct=slippage,
+                    kelly_min_trades=kelly_min_trades,
                 )
                 if not tdf.empty:
                     tdf = tdf.copy()
                     tdf["window_id"] = i
                     tdf["strategy"] = "B"
+                    tdf["provider"] = provider_name
+                    all_trades.append(tdf)
+            elif strategy == "C":
+                tdf = simulate_strategy_c(
+                    provider=provider,
+                    symbol=sym,
+                    start=w["test_start"],
+                    end=w["test_end"],
+                    holding_days=holding_days,
+                )
+                if not tdf.empty:
+                    tdf = tdf.copy()
+                    tdf["window_id"] = i
+                    tdf["strategy"] = "C"
                     tdf["provider"] = provider_name
                     all_trades.append(tdf)
 
@@ -96,7 +113,7 @@ def main() -> int:
     parser.add_argument("--out", default="outputs/walkforward_trades.csv")
     parser.add_argument("--provider", default="mock", choices=["mock", "lambdaclass", "polygon", "thetadata", "eodhd"])
     parser.add_argument("--provider-root", default="data/lambdaclass-data-v1")
-    parser.add_argument("--strategy", default="B", choices=["B"])
+    parser.add_argument("--strategy", default="B", choices=["B", "C"])
     parser.add_argument("--symbols", default="SPY", help="Comma-separated symbols. VID-4 strategy designed for SPY. IWM/QQQ are out-of-sample.")
     parser.add_argument("--ff-threshold", type=float, default=0.2)
     parser.add_argument("--holding-days", type=int, default=10)
@@ -108,6 +125,7 @@ def main() -> int:
     parser.add_argument("--use-kelly", action="store_true", help="Enable Kelly position sizing")
     parser.add_argument("--stop-loss", type=float, default=-0.20, help="Intra-trade stop loss threshold (return), e.g. -0.20")
     parser.add_argument("--slippage", type=float, default=0.0, help="Slippage applied at entry/exit pricing")
+    parser.add_argument("--kelly-min-trades", type=int, default=50, help="Minimum trade history before empirical Kelly sizing")
     args = parser.parse_args()
 
     start = dt.date.fromisoformat(args.start)
@@ -134,6 +152,7 @@ def main() -> int:
         use_kelly=args.use_kelly,
         stop_loss=args.stop_loss,
         slippage=args.slippage,
+        kelly_min_trades=args.kelly_min_trades,
     )
     summary = summarize_trade_log(df)
     print(f"walkforward done. provider={args.provider} strategy={args.strategy} trades={len(df)} out={args.out}")
