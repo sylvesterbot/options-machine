@@ -54,18 +54,19 @@ def compute_forward_factor(chain: pd.DataFrame, spot: float, as_of_date: dt.date
 
     def ff_from_pair(front_exp, back_exp, front_iv, back_iv):
         if not front_iv or not back_iv or front_iv <= 0 or back_iv <= 0:
-            return float("nan")
+            return float("nan"), float("nan")
         tf = (front_exp - today).days / 365.0
         tb = (back_exp - today).days / 365.0
         if tb <= tf or tf <= 0:
-            return float("nan")
+            return float("nan"), float("nan")
         fwd_var = (back_iv**2 * tb - front_iv**2 * tf) / (tb - tf)
         fwd_iv = np.sqrt(max(fwd_var, 0.0001))
-        return float((front_iv - fwd_iv) / fwd_iv)
+        ff = float((front_iv - fwd_iv) / fwd_iv)
+        return ff, float(fwd_iv)
 
-    ff_30_60 = ff_from_pair(exp_30, exp_60, iv_30, iv_60)
-    ff_60_90 = ff_from_pair(exp_60, exp_90, iv_60, iv_90)
-    ff_30_90 = ff_from_pair(exp_30, exp_90, iv_30, iv_90)
+    ff_30_60, fwd_30_60 = ff_from_pair(exp_30, exp_60, iv_30, iv_60)
+    ff_60_90, fwd_60_90 = ff_from_pair(exp_60, exp_90, iv_60, iv_90)
+    ff_30_90, fwd_30_90 = ff_from_pair(exp_30, exp_90, iv_30, iv_90)
 
     pairs = {"30-60": ff_30_60, "60-90": ff_60_90, "30-90": ff_30_90}
     valid = {k: v for k, v in pairs.items() if not np.isnan(v)}
@@ -106,6 +107,8 @@ def compute_forward_factor(chain: pd.DataFrame, spot: float, as_of_date: dt.date
 
     ff_signal = ff_signal_adaptive if ff_signal_adaptive != "NONE" else ff_signal_raw
 
+    forward_iv_map = {"30-60": fwd_30_60, "60-90": fwd_60_90, "30-90": fwd_30_90}
+
     return {
         "forward_factor": float(ff_best),
         "ff_30_60": ff_30_60,
@@ -119,7 +122,7 @@ def compute_forward_factor(chain: pd.DataFrame, spot: float, as_of_date: dt.date
         "ff_zscore": ff_z,
         "front_iv": iv_30 if iv_30 is not None else float("nan"),
         "back_iv": iv_90 if iv_90 is not None else float("nan"),
-        "forward_iv": float("nan"),
+        "forward_iv": float(forward_iv_map.get(ff_best_pair, float("nan"))),
         "front_dte": (exp_30 - today).days,
         "back_dte": (exp_90 - today).days,
         "nearest_gap_30": abs((exp_30 - (today + dt.timedelta(days=30))).days),
