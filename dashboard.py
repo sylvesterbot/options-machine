@@ -7,7 +7,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-st.set_page_config(page_title="Options Machine Dashboard", layout="wide")
+st.set_page_config(page_title="Options Machine Dashboard", page_icon="📊", layout="wide")
 st.title("Options Machine Dashboard")
 
 
