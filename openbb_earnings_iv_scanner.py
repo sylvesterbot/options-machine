@@ -342,12 +342,16 @@ def implied_move_pct(atm: pd.DataFrame, spot: float) -> float:
 
 
 
-def build_advice(strategies: str, ff_note: str = "") -> str:
+def build_advice(strategies: str, ff_note: str = "", iv_rv_ratio: float = float("nan")) -> str:
     strategy_set = {x.strip() for x in (strategies or "").split(",") if x.strip()}
     advice_parts: list[str] = []
     if "A" in strategy_set:
         advice_parts.append("Hold-through-earnings: Long calendar spread (sell front, buy back month).")
-        advice_parts.append("If selling premium, use defined-risk only (iron condor/iron fly) with explicit tail-risk controls.")
+        advice_parts.append("Use defined-risk premium structures only (iron condor/iron fly) with explicit tail controls.")
+        if not np.isnan(iv_rv_ratio) and iv_rv_ratio >= 1.6:
+            advice_parts.append("Defined-risk premium tier: Iron Fly (wider wings for event risk).")
+        elif not np.isnan(iv_rv_ratio) and iv_rv_ratio >= 1.25:
+            advice_parts.append("Defined-risk premium tier: Iron Condor.")
         advice_parts.append("Short straddle is only for pre-announcement IV ramp harvesting and should be exited BEFORE earnings.")
     if "B" in strategy_set:
         advice_parts.append("Forward Factor supports calendar structures; prefer X-earn windows.")
@@ -590,7 +594,7 @@ def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = 
                     days_to_earnings=days_to_earnings,
                     earnings_distortion_flag=distorted,
                     ff_note=ff_note,
-                    advice=build_advice(strategies_joined, ff_note=ff_note),
+                    advice=build_advice(strategies_joined, ff_note=ff_note, iv_rv_ratio=iv_rv),
                     suggested_allocation_pct=alloc_pct_capped,
                     suggested_allocation_usd=alloc_usd,
                     liquidity_capped=was_capped,
