@@ -3,3 +3,6 @@ yfinance
 pandas
 numpy
 scipy
+streamlit>=1.30.0
+plotly>=5.18.0
+requests

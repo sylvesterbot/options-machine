@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from alerts import format_daily_alert
+from alerts import format_daily_alert, format_trade_alert, send_discord_webhook
 from openbb_earnings_iv_scanner import append_tracker, scan, to_markdown as generate_markdown
 from watchlist import append_watchlist
 
@@ -45,6 +45,16 @@ def run_pipeline(args: argparse.Namespace) -> pd.DataFrame:
         alert = format_daily_alert(df)
         print(alert)
 
+    webhook = getattr(args, "discord_webhook", "")
+    if webhook and not df.empty:
+        signaled = df[df["strategies"].fillna("").astype(str).str.len() > 0]
+        ok_all = True
+        for _, row in signaled.iterrows():
+            message = format_trade_alert(row.to_dict())
+            ok = send_discord_webhook(message, webhook)
+            ok_all = ok_all and ok
+        print(f"Discord webhook: {'ok' if ok_all else 'failed'}")
+
     print(f"Scan done. rows={len(df)}")
     print(f"CSV: {out_csv}")
     print(f"MD:  {out_md}")
@@ -68,6 +78,7 @@ def main() -> int:
     parser.add_argument("--capital", type=float, default=None)
     parser.add_argument("--default-alloc", type=float, default=0.04)
     parser.add_argument("--portfolio-dd", type=float, default=0.0)
+    parser.add_argument("--discord-webhook", default="", help="Optional Discord webhook URL for trade alert push")
     args = parser.parse_args()
 
     run_pipeline(args)
