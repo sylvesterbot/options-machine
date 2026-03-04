@@ -46,10 +46,14 @@ def run_pipeline(args: argparse.Namespace) -> pd.DataFrame:
         print(alert)
 
     webhook = getattr(args, "discord_webhook", "")
-    if webhook:
-        payload = format_trade_alert(df)
-        ok = send_discord_webhook(webhook, payload)
-        print(f"Discord webhook: {'ok' if ok else 'failed'}")
+    if webhook and not df.empty:
+        signaled = df[df["strategies"].fillna("").astype(str).str.len() > 0]
+        ok_all = True
+        for _, row in signaled.iterrows():
+            message = format_trade_alert(row.to_dict())
+            ok = send_discord_webhook(message, webhook)
+            ok_all = ok_all and ok
+        print(f"Discord webhook: {'ok' if ok_all else 'failed'}")
 
     print(f"Scan done. rows={len(df)}")
     print(f"CSV: {out_csv}")

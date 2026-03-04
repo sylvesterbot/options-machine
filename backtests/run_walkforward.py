@@ -90,6 +90,10 @@ def run_walkforward(
                     start=w["test_start"],
                     end=w["test_end"],
                     holding_days=holding_days,
+                    use_kelly=use_kelly,
+                    stop_loss_pct=stop_loss,
+                    slippage_pct=slippage,
+                    kelly_min_trades=kelly_min_trades,
                 )
                 if not tdf.empty:
                     tdf = tdf.copy()
