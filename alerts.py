@@ -1,6 +1,7 @@
-"""Format Telegram alerts for daily scans and outcomes."""
+"""Format Telegram/Discord alerts for daily scans and outcomes."""
 import pandas as pd
 import numpy as np
+import requests
 
 
 def format_daily_alert(df: pd.DataFrame) -> str:
@@ -57,3 +58,24 @@ def format_outcome_alert(alerts: list[dict]) -> str:
         act = f"{a['actual_move']:.1%}"
         lines.append(f"{emoji} {a['symbol']} — predicted {exp}, actual {act}")
     return "\n".join(lines)
+
+
+def format_trade_alert(df: pd.DataFrame) -> str:
+    """Compact trade alert for chat/webhooks."""
+    if df.empty:
+        return "No trade candidates."
+    top = df.head(5)
+    lines = ["Options Machine Trade Alert"]
+    for _, r in top.iterrows():
+        ivrv = r.get("iv_rv_ratio", float("nan"))
+        ff = r.get("ff_best", r.get("forward_factor", float("nan")))
+        strategies = r.get("strategies", "") or "-"
+        lines.append(f"- {r.get('symbol','?')} [{strategies}] IV/RV={ivrv:.2f} FF={ff:.2f} E={r.get('earnings_date','?')}")
+    return "\n".join(lines)
+
+
+def send_discord_webhook(webhook_url: str, content: str, timeout: int = 10) -> bool:
+    if not webhook_url:
+        return False
+    resp = requests.post(webhook_url, json={"content": content[:1900]}, timeout=timeout)
+    return 200 <= resp.status_code < 300
