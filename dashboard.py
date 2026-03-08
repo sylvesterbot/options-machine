@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 st.set_page_config(page_title="Options Machine Dashboard", layout="wide")
@@ -40,22 +42,41 @@ mc = load_json(mc_path)
 
 tab_overview, tab_backtest, tab_mc, tab_alerts = st.tabs(["Overview", "Backtest", "Monte Carlo", "Alerts"])
 
+# ── Overview Tab ──────────────────────────────────────────────
 with tab_overview:
-    c1, c2, c3 = st.columns(3)
-    trades = int(len(backtest_df)) if not backtest_df.empty else 0
-    total_return = 0.0
     if not backtest_df.empty and "return_pct" in backtest_df.columns:
-        eq = (1 + pd.to_numeric(backtest_df["return_pct"], errors="coerce").fillna(0)).cumprod()
-        if len(eq) > 0:
-            total_return = float(eq.iloc[-1] - 1.0)
+        r = pd.to_numeric(backtest_df["return_pct"], errors="coerce").fillna(0)
+        eq = (1 + r).cumprod()
+        total_return = float(eq.iloc[-1] - 1.0) if len(eq) > 0 else 0.0
+        peak = eq.cummax()
+        dd = (eq / peak) - 1.0
+        max_dd = float(dd.min())
+        wins = int((r > 0).sum())
+        win_rate = wins / len(r) * 100 if len(r) > 0 else 0.0
+        vol = float(r.std(ddof=1)) if len(r) > 1 else 0.0
 
-    c1.metric("Trades", trades)
-    c2.metric("Backtest Total Return", f"{total_return*100:.2f}%")
-    c3.metric("Scanner Signals", int(len(scan_df)) if not scan_df.empty else 0)
+        trades_per_year = float(len(r))
+        if "entry_date" in backtest_df.columns:
+            dates = pd.to_datetime(backtest_df["entry_date"], errors="coerce")
+            years = (dates.max() - dates.min()).days / 365.25
+            if years > 0:
+                trades_per_year = len(r) / years
+        sharpe = float((r.mean() / vol) * np.sqrt(trades_per_year)) if vol > 0 else 0.0
+
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        c1.metric("Trades", int(len(r)))
+        c2.metric("Total Return", f"{total_return*100:.1f}%")
+        c3.metric("Win Rate", f"{win_rate:.0f}%")
+        c4.metric("Max Drawdown", f"{max_dd*100:.1f}%")
+        c5.metric("Sharpe", f"{sharpe:.2f}")
+        c6.metric("Trades/Year", f"{trades_per_year:.1f}")
+    else:
+        st.info("No backtest data available.")
 
     if not backtest_df.empty:
         st.dataframe(backtest_df.tail(50), use_container_width=True)
 
+# ── Backtest Tab ──────────────────────────────────────────────
 with tab_backtest:
     st.subheader("Backtest")
     if backtest_df.empty:
@@ -72,8 +93,22 @@ with tab_backtest:
                 bt["x"] = range(len(bt))
             fig = px.line(bt, x="x", y="eq", title="Equity Curve")
             st.plotly_chart(fig, use_container_width=True)
+
+            bt["return_pct_num"] = pd.to_numeric(bt["return_pct"], errors="coerce")
+            bt["color"] = bt["return_pct_num"].apply(lambda x: "green" if x > 0 else "red")
+            bt["trade_num"] = range(len(bt))
+            fig_bar = px.bar(
+                bt, x="trade_num", y="return_pct_num",
+                color="color", color_discrete_map={"green": "#00D4AA", "red": "#FF4B4B"},
+                title="Per-Trade Returns",
+                labels={"trade_num": "Trade #", "return_pct_num": "Return %"},
+            )
+            fig_bar.update_layout(showlegend=False)
+            st.plotly_chart(fig_bar, use_container_width=True)
+
         st.dataframe(backtest_df, use_container_width=True)
 
+# ── Monte Carlo Tab ───────────────────────────────────────────
 with tab_mc:
     st.subheader("Monte Carlo")
     if not mc:
@@ -86,24 +121,53 @@ with tab_mc:
 
         fan = mc.get("fan_chart", {})
         if fan:
-            fan_df = pd.DataFrame({
-                "step": list(range(len(fan.get("50", [])))),
-                "p5": fan.get("5", []),
-                "p25": fan.get("25", []),
-                "p50": fan.get("50", []),
-                "p75": fan.get("75", []),
-                "p95": fan.get("95", []),
-            })
-            long = fan_df.melt(id_vars=["step"], var_name="percentile", value_name="equity")
-            fig = px.line(long, x="step", y="equity", color="percentile", title="Monte Carlo Fan Chart")
-            st.plotly_chart(fig, use_container_width=True)
+            fig_fan = go.Figure()
+            steps = list(range(len(fan.get("50", []))))
+
+            fig_fan.add_trace(go.Scatter(
+                x=steps, y=fan["95"], mode="lines", line=dict(width=0),
+                showlegend=False, name="P95"))
+            fig_fan.add_trace(go.Scatter(
+                x=steps, y=fan["5"], mode="lines", line=dict(width=0),
+                fill="tonexty", fillcolor="rgba(0, 212, 170, 0.1)",
+                showlegend=True, name="5th-95th Percentile"))
+            fig_fan.add_trace(go.Scatter(
+                x=steps, y=fan["75"], mode="lines", line=dict(width=0),
+                showlegend=False, name="P75"))
+            fig_fan.add_trace(go.Scatter(
+                x=steps, y=fan["25"], mode="lines", line=dict(width=0),
+                fill="tonexty", fillcolor="rgba(0, 212, 170, 0.25)",
+                showlegend=True, name="25th-75th Percentile"))
+            fig_fan.add_trace(go.Scatter(
+                x=steps, y=fan["50"], mode="lines",
+                line=dict(color="#00D4AA", width=2), name="Median"))
+            fig_fan.update_layout(
+                title="Monte Carlo Fan Chart",
+                xaxis_title="Trade #", yaxis_title="Equity ($)",
+                template="plotly_dark")
+            st.plotly_chart(fig_fan, use_container_width=True)
+
         st.dataframe(pd.DataFrame([mc]), use_container_width=True)
 
+# ── Alerts Tab ────────────────────────────────────────────────
 with tab_alerts:
-    st.subheader("Alerts")
+    st.subheader("Scanner Alerts")
     if scan_df.empty:
         st.info("No scan CSV found.")
     else:
-        show_cols = [c for c in ["symbol", "earnings_date", "strategies", "iv_rv_ratio", "forward_factor", "ff_best"] if c in scan_df.columns]
-        alerts_df = scan_df[show_cols].copy() if show_cols else scan_df.copy()
-        st.dataframe(alerts_df, use_container_width=True)
+        display_df = scan_df.copy()
+        if "tier_label" in display_df.columns:
+            tier_icons = {"TIER_1": "🔴", "TIER_2": "🟡", "NEAR_MISS": "⚪"}
+            display_df["Signal"] = display_df["tier_label"].map(tier_icons).fillna("") + " " + display_df["tier_label"].fillna("")
+
+        show_cols = [c for c in ["Signal", "symbol", "earnings_date", "strategies",
+                                  "iv_rv_ratio", "ff_best", "tier_label", "filter_failures"]
+                     if c in display_df.columns]
+        st.dataframe(
+            display_df[show_cols] if show_cols else display_df,
+            use_container_width=True,
+            column_config={
+                "iv_rv_ratio": st.column_config.NumberColumn("IV/RV", format="%.2f"),
+                "ff_best": st.column_config.NumberColumn("FF Best", format="%.2f"),
+            },
+        )

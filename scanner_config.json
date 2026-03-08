@@ -1,0 +1,13 @@
+{
+  "strategy_a": {
+    "iv_rv_min": 1.25
+  },
+  "strategy_b": {
+    "ff_strong_threshold": 0.20,
+    "ff_moderate_threshold": 0.10
+  },
+  "hard_filters": {
+    "min_price": 10.0,
+    "min_open_interest": 2000
+  }
+}

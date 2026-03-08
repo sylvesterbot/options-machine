@@ -10,34 +10,46 @@ def format_daily_alert(df: pd.DataFrame) -> str:
 
     lines = [f"📊 Options Machine Scan — {pd.Timestamp.now().strftime('%b %d, %Y')}", ""]
 
-    strong = df[df["strategies"].str.contains(",", na=False)]
-    single = df[~df["strategies"].str.contains(",", na=False) & (df["strategies"] != "")]
+    def _fmt_row(lines_list, d):
+        iv_rv = f"IV/RV: {d['iv_rv_ratio']:.2f}" if not np.isnan(d.get("iv_rv_ratio", float("nan"))) else ""
+        ff_val = d.get("ff_best", d.get("forward_factor", float("nan")))
+        ff = f"FF: {ff_val:.2f}" if not np.isnan(ff_val) else ""
+        alloc = d.get("suggested_allocation_pct", float("nan"))
+        alloc_txt = f"Alloc: {alloc*100:.1f}%" if not np.isnan(alloc) else ""
+        parts = [p for p in [iv_rv, ff, alloc_txt] if p]
+        lines_list.append(f"  • {d['symbol']} [{d.get('strategies', '-')}] — {' | '.join(parts)} | Earnings {d['earnings_date']}")
 
-    if not strong.empty:
-        lines.append("🔴 STRONG (multi-strategy):")
-        for _, r in strong.iterrows():
-            d = r.to_dict()
-            iv_rv = f"IV/RV: {d['iv_rv_ratio']:.2f}" if not np.isnan(d.get("iv_rv_ratio", float("nan"))) else ""
-            ff_val = d.get("ff_best", d.get("forward_factor", float("nan")))
-            ff = f"FF: {ff_val:.2f}" if not np.isnan(ff_val) else ""
-            alloc = d.get("suggested_allocation_pct", float("nan"))
-            alloc_txt = f"Alloc: {alloc*100:.1f}%" if not np.isnan(alloc) else ""
-            parts = [p for p in [iv_rv, ff, alloc_txt] if p]
-            lines.append(f"  • {d['symbol']} [{d['strategies']}] — {' | '.join(parts)} | Earnings {d['earnings_date']}")
+    if "tier" in df.columns:
+        tier1 = df[df["tier"] == 1]
+        tier2 = df[df["tier"] == 2]
+        near_miss = df[df["tier"] == 3]
+    else:
+        tier1 = df[df["strategies"].str.contains(",", na=False)]
+        tier2 = df[~df["strategies"].str.contains(",", na=False) & (df["strategies"] != "")]
+        near_miss = pd.DataFrame()
+
+    if not tier1.empty:
+        lines.append("🔴 TIER_1 — RECOMMENDED TRADES:")
+        for _, r in tier1.iterrows():
+            _fmt_row(lines, r.to_dict())
         lines.append("")
 
-    if not single.empty:
-        lines.append("🟡 MODERATE (single strategy):")
-        for _, r in single.iterrows():
+    if not tier2.empty:
+        lines.append("🟡 TIER 2 — ONE NEAR-MISS FILTER:")
+        for _, r in tier2.iterrows():
+            _fmt_row(lines, r.to_dict())
+        lines.append("")
+
+    if not near_miss.empty:
+        lines.append("⚪ NEAR MISSES — WATCH LIST:")
+        for _, r in near_miss.iterrows():
             d = r.to_dict()
-            iv_rv = f"IV/RV: {d['iv_rv_ratio']:.2f}" if not np.isnan(d.get("iv_rv_ratio", float("nan"))) else ""
-            alloc = d.get("suggested_allocation_pct", float("nan"))
-            alloc_txt = f" | Alloc: {alloc*100:.1f}%" if not np.isnan(alloc) else ""
-            lines.append(f"  • {d['symbol']} [{d['strategies']}] — {iv_rv}{alloc_txt} | Earnings {d['earnings_date']}")
+            reason = d.get("filter_failures", "")
+            lines.append(f"  • {d['symbol']} [{d.get('strategies', '-')}] — {reason}")
         lines.append("")
 
     lines.append("Strategy key: A=IV Crush, B=Calendar, C=Skew Vertical")
-    lines.append("Safety note: Strategy A should use hold-through long calendars or defined-risk structures only (iron condor/iron fly).")
+    lines.append("Safety note: Strategy A should use defined-risk structures only (iron condor/iron fly).")
     return "\n".join(lines)
 
 
@@ -53,7 +65,7 @@ def format_outcome_alert(alerts: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def format_trade_alert(row: dict, capital: float = 100000.0) -> str:
+def format_trade_alert(row: dict, capital: float = 100000.0, iron_fly: dict | None = None) -> str:
     symbol = row.get("symbol", "?")
     strategies = row.get("strategies", "-")
     earnings = row.get("earnings_date", "?")
@@ -68,13 +80,24 @@ def format_trade_alert(row: dict, capital: float = 100000.0) -> str:
         alloc = 0.04
     alloc_usd = float(capital) * float(alloc)
 
-    return (
+    msg = (
         f"🚨 Trade Signal: {symbol}\n"
         f"Strategies: {strategies}\n"
         f"Earnings: {earnings}\n"
         f"IV/RV: {iv_txt} | FF: {ff_txt}\n"
         f"Suggested allocation: {float(alloc)*100:.1f}% (${alloc_usd:,.0f})"
     )
+
+    if iron_fly and not iron_fly.get("error"):
+        msg += (
+            f"\n\n📐 Iron Fly:\n"
+            f"  SHORT: ${iron_fly['short_put_strike']}P / ${iron_fly['short_call_strike']}C\n"
+            f"  Credit: ${iron_fly['net_credit']} | Max loss: ${iron_fly['max_loss']}\n"
+            f"  Break-evens: {iron_fly['lower_breakeven']} - {iron_fly['upper_breakeven']}\n"
+            f"  Risk:Reward = 1:{iron_fly['risk_reward_ratio']}"
+        )
+
+    return msg
 
 
 def send_discord_webhook(message: str, webhook_url: str) -> bool:
