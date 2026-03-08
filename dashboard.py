@@ -12,6 +12,67 @@ import streamlit as st
 st.set_page_config(page_title="Options Machine Dashboard", layout="wide")
 st.title("Options Machine Dashboard")
 
+st.markdown("""
+<style>
+    /* Import Google Font */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+
+    /* KPI Cards */
+    [data-testid="stMetric"] {
+        background: linear-gradient(135deg, #1A1F2E 0%, #252B3B 100%);
+        border: 1px solid rgba(0, 212, 170, 0.2);
+        border-radius: 12px;
+        padding: 16px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    }
+    [data-testid="stMetricLabel"] { font-size: 0.85rem; color: #8B95A5; }
+    [data-testid="stMetricValue"] { font-size: 1.6rem; font-weight: 700; }
+
+    /* Tab styling */
+    .stTabs [data-baseweb="tab"] {
+        font-weight: 600;
+        font-size: 1rem;
+        padding: 10px 24px;
+    }
+
+    /* Buttons */
+    .stButton > button {
+        background: linear-gradient(135deg, #00D4AA 0%, #00B894 100%);
+        color: #0E1117;
+        font-weight: 600;
+        border-radius: 8px;
+        border: none;
+        padding: 8px 24px;
+        transition: all 0.2s;
+    }
+    .stButton > button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(0, 212, 170, 0.4);
+    }
+
+    /* Download buttons */
+    .stDownloadButton > button {
+        background: transparent;
+        border: 1px solid #00D4AA;
+        color: #00D4AA;
+        border-radius: 8px;
+    }
+
+    /* Sidebar */
+    [data-testid="stSidebar"] {
+        background: #0A0D14;
+        border-right: 1px solid rgba(0, 212, 170, 0.1);
+    }
+
+    /* Tier cards */
+    .tier-1 { background: linear-gradient(135deg, rgba(255,75,75,0.15), rgba(255,75,75,0.05)); border-left: 4px solid #FF4B4B; }
+    .tier-2 { background: linear-gradient(135deg, rgba(255,193,7,0.15), rgba(255,193,7,0.05)); border-left: 4px solid #FFC107; }
+    .near-miss { background: linear-gradient(135deg, rgba(158,158,158,0.15), rgba(158,158,158,0.05)); border-left: 4px solid #9E9E9E; }
+</style>
+""", unsafe_allow_html=True)
+
 
 @st.cache_data
 def load_csv(path: str) -> pd.DataFrame:
