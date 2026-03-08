@@ -36,6 +36,7 @@ from scanner.momentum import compute_momentum
 from scanner.historical_moves import compute_historical_move_stats
 from scanner.greeks import enrich_chain_with_greeks, compute_position_greeks
 from scanner.signal_history import append_signals, get_ticker_zscore, get_iv_percentile
+from scanner.config import load_config
 from backtests.kelly import compute_kelly_fraction
 
 
@@ -104,6 +105,9 @@ class ScanRow:
     momentum_dir: str = "NEUTRAL"
     # Combined
     strategies: str = ""
+    tier: int = 0
+    tier_label: str = ""
+    filter_failures: str = ""
 
 
 class OpenBBClient:
@@ -324,6 +328,13 @@ def select_30d_atm(chain: pd.DataFrame, spot: float) -> tuple[pd.DataFrame, dt.d
     e_df = chain[chain["expiration"] == expiry].copy()
     if e_df.empty:
         return None, None
+    # Prefer delta-based ATM (35-50Δ)
+    if "delta" in e_df.columns:
+        e_df["abs_delta"] = pd.to_numeric(e_df["delta"], errors="coerce").abs()
+        atm = e_df[(e_df["abs_delta"] >= 0.35) & (e_df["abs_delta"] <= 0.50)]
+        if not atm.empty:
+            return atm.copy(), expiry
+    # Fallback: nearest strike
     e_df["dist"] = (e_df["strike"] - spot).abs()
     min_dist = e_df["dist"].min()
     atm = e_df[e_df["dist"] == min_dist].copy()
@@ -440,9 +451,70 @@ def compute_suggested_allocation(
     usd = float("nan") if capital is None else float(capital) * alloc
     return float(alloc), float(usd)
 
-def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = False, capital: float | None = None, default_alloc: float = 0.04, portfolio_dd: float = 0.0) -> pd.DataFrame:
+def classify_tier(
+    spot: float,
+    iv_rv: float,
+    option_volume: float,
+    open_interest: float,
+    strategies: str,
+    cfg: dict,
+) -> tuple[int, str, str]:
+    """Classify into Tier 1/2/Near Miss.
+    Returns (tier_int, tier_label, failure_reasons_csv).
+    """
+    hard = cfg["hard_filters"]
+    tiers = cfg["tiering"]
+    failures = []
+
+    if spot < hard["min_price"]:
+        return 0, "", "price_below_min"
+    if open_interest < hard["min_open_interest"]:
+        return 0, "", "oi_below_min"
+
+    near_miss_count = 0
+
+    if not np.isnan(iv_rv):
+        if iv_rv >= tiers["iv_rv_pass"]:
+            pass
+        elif iv_rv >= tiers["iv_rv_near_miss"]:
+            near_miss_count += 1
+            failures.append("iv_rv_near_miss")
+        else:
+            failures.append("iv_rv_fail")
+
+    if option_volume >= tiers["volume_pass"]:
+        pass
+    elif option_volume >= tiers["volume_near_miss"]:
+        near_miss_count += 1
+        failures.append("volume_near_miss")
+    else:
+        failures.append("volume_fail")
+
+    if not strategies:
+        failures.append("no_strategy")
+
+    hard_fails = [f for f in failures if not f.endswith("_near_miss")]
+    if hard_fails:
+        return 0, "", ",".join(failures)
+
+    if near_miss_count == 0:
+        return 1, "TIER_1", ""
+    elif near_miss_count == 1:
+        return 2, "TIER_2", ",".join(failures)
+    else:
+        return 3, "NEAR_MISS", ",".join(failures)
+
+
+def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = False, capital: float | None = None, default_alloc: float = 0.04, portfolio_dd: float = 0.0, tickers_override: list[str] | None = None) -> pd.DataFrame:
     obb = OpenBBClient()
-    tickers = obb.get_sp500_universe()
+    cfg = load_config("scanner_config.json")
+    scanner_cfg = cfg.get("scanner", {}) if isinstance(cfg, dict) else {}
+    signal_history_path = str(scanner_cfg.get("signal_history_path", "data/signal_history.csv"))
+    cfg_min_oi = int(scanner_cfg.get("min_oi", 0) or 0)
+    cfg_min_vol = int(scanner_cfg.get("min_vol", 0) or 0)
+    min_oi = max(int(min_oi), cfg_min_oi)
+    min_vol = max(int(min_vol), cfg_min_vol)
+    tickers = [t.upper() for t in (tickers_override or [])] if tickers_override else obb.get_sp500_universe()
     start = dt.date.today()
     end = start + dt.timedelta(days=window_days)
     earnings = obb.get_earnings_calendar(tickers, start, end)
@@ -493,6 +565,16 @@ def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = 
                 skip["no_atm"] += 1
                 continue
 
+            # Liquidity filter: remove options with bid-ask spread > 30% of ask
+            if atm is not None and not atm.empty and "bid" in atm.columns and "ask" in atm.columns:
+                asks = pd.to_numeric(atm["ask"], errors="coerce")
+                bids = pd.to_numeric(atm["bid"], errors="coerce")
+                denom = asks.replace(0, np.nan)
+                atm_spreads = (asks - bids) / denom
+                liquid_atm = atm[atm_spreads <= 0.30]
+                if not liquid_atm.empty:
+                    atm = liquid_atm
+
             iv_col = "implied_volatility" if "implied_volatility" in atm.columns else None
             iv30 = float(atm[iv_col].dropna().mean()) if iv_col and atm[iv_col].notna().any() else float("nan")
 
@@ -507,7 +589,11 @@ def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = 
             hist = compute_historical_move_stats(symbol=symbol, current_expected_move=em, obb_client=obb)
 
             # Strategy B: Forward Factor
-            ff_data = compute_forward_factor(chain, spot, symbol=symbol, signal_history_path="data/signal_history.csv")
+            ff_data = compute_forward_factor(
+                chain, spot, symbol=symbol, signal_history_path="data/signal_history.csv",
+                ff_strong_threshold=cfg["strategy_b"]["ff_strong_threshold"],
+                ff_moderate_threshold=cfg["strategy_b"]["ff_moderate_threshold"],
+            )
             earnings_dt = pd.to_datetime(edate, errors="coerce")
             if pd.isna(earnings_dt):
                 skip["exception"] += 1
@@ -534,11 +620,15 @@ def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = 
                 strats.append("C")
 
             strategies_joined = ",".join(strats) if strats else ""
+            tier, tier_label, filter_failures = classify_tier(
+                spot=spot, iv_rv=iv_rv, option_volume=vol, open_interest=oi,
+                strategies=strategies_joined, cfg=cfg,
+            )
             # history-derived z-scores / percentiles
-            ff_z = get_ticker_zscore(symbol, "ff_best", float(ff_data.get("ff_best", float("nan"))), path="data/signal_history.csv")
-            skew_z = get_ticker_zscore(symbol, "put_skew", float(skew_data.get("put_skew", float("nan"))), path="data/signal_history.csv")
-            ivrv_z = get_ticker_zscore(symbol, "iv_rv_ratio", float(iv_rv if not np.isnan(iv_rv) else float("nan")), path="data/signal_history.csv")
-            iv_pct = get_iv_percentile(symbol, float(iv_rv if not np.isnan(iv_rv) else float("nan")), path="data/signal_history.csv")
+            ff_z = get_ticker_zscore(symbol, "ff_best", float(ff_data.get("ff_best", float("nan"))), path=signal_history_path)
+            skew_z = get_ticker_zscore(symbol, "put_skew", float(skew_data.get("put_skew", float("nan"))), path=signal_history_path)
+            ivrv_z = get_ticker_zscore(symbol, "iv_rv_ratio", float(iv_rv if not np.isnan(iv_rv) else float("nan")), path=signal_history_path)
+            iv_pct = get_iv_percentile(symbol, float(iv_rv if not np.isnan(iv_rv) else float("nan")), path=signal_history_path)
 
             strategy_for_alloc = strategies_joined or "NONE"
             mapped_default = default_alloc
@@ -562,7 +652,7 @@ def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = 
             if capital is not None:
                 alloc_usd = float(capital) * alloc_pct_capped
 
-            append_signals([{"timestamp_utc": dt.datetime.now(dt.UTC).isoformat(), "symbol": symbol, "iv_rv_ratio": iv_rv, "ff_best": ff_data.get("ff_best", float("nan")), "put_skew": skew_data.get("put_skew", float("nan")), "expected_move_pct": em}], path="data/signal_history.csv")
+            append_signals([{"timestamp_utc": dt.datetime.now(dt.UTC).isoformat(), "symbol": symbol, "iv_rv_ratio": iv_rv, "ff_best": ff_data.get("ff_best", float("nan")), "put_skew": skew_data.get("put_skew", float("nan")), "expected_move_pct": em}], path=signal_history_path)
 
             rows.append(
                 ScanRow(
@@ -618,6 +708,9 @@ def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = 
                     momentum_pct=mom_data["momentum_pct"],
                     momentum_dir=mom_data["momentum_dir"],
                     strategies=strategies_joined,
+                    tier=tier,
+                    tier_label=tier_label,
+                    filter_failures=filter_failures,
                 )
             )
         except Exception as exc:
@@ -640,6 +733,53 @@ def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = 
     df = pd.DataFrame([asdict(r) for r in rows])
     df = df.sort_values(by=["iv_rv_ratio", "iv30_proxy"], ascending=False).head(top_n)
     return df
+
+
+def analyze_single_ticker(ticker: str, args: argparse.Namespace) -> dict | None:
+    """Analyze a single ticker — bypass earnings calendar, show all metrics."""
+    cfg = load_config()
+    client = OpenBBClient()
+    try:
+        price_df = client.get_price_history(ticker)
+        if price_df.empty:
+            return None
+        spot = float(price_df["close"].iloc[-1])
+        chain = client.get_options_chain(ticker)
+    except Exception as e:
+        print(f"  Error: {e}")
+        return None
+
+    rv30 = realized_vol_30(price_df)
+    atm, _atm_exp = select_30d_atm(chain, spot)
+    iv30 = float(atm["implied_volatility"].mean()) if atm is not None and not atm.empty and "implied_volatility" in atm.columns else float("nan")
+    iv_rv = iv30 / rv30 if rv30 and rv30 > 0 else float("nan")
+
+    ff_data = compute_forward_factor(
+        chain, spot, symbol=ticker,
+        signal_history_path="data/signal_history.csv",
+        ff_strong_threshold=cfg["strategy_b"]["ff_strong_threshold"],
+        ff_moderate_threshold=cfg["strategy_b"]["ff_moderate_threshold"],
+    )
+
+    skew = compute_skew_score(chain, spot, rv30)
+    momentum = compute_momentum(price_df)
+
+    em = implied_move_pct(atm, spot) if atm is not None else float("nan")
+
+    result = {
+        "symbol": ticker,
+        "spot": spot,
+        "iv30_proxy": iv30,
+        "rv30": rv30,
+        "iv_rv_ratio": iv_rv,
+        "expected_move_pct": em,
+        **{k: v for k, v in ff_data.items() if k != "pair_expiries"},
+        "put_skew": skew.get("put_skew", float("nan")),
+        "skew_signal": skew.get("skew_signal", "NONE"),
+        "momentum_pct": momentum.get("momentum_pct", float("nan")),
+        "momentum_dir": momentum.get("direction", "NEUTRAL"),
+    }
+    return result
 
 
 def append_tracker(df: pd.DataFrame, path: Path, args: argparse.Namespace) -> None:
@@ -686,8 +826,8 @@ def to_markdown(df: pd.DataFrame, args: argparse.Namespace) -> str:
     lines += [
         "## Top Candidates",
         "",
-        "| Symbol | Earnings | Spot | IV/RV | MvRatio | FFbest | FFpair | FFnote | Distorted? | Alloc% | Alloc$ | Skew | Mom | Strategies |",
-        "|--------|----------|------|-------|---------|--------|--------|--------|------------|--------|--------|------|-----|------------|",
+        "| Symbol | Earnings | Spot | IV/RV | MvRatio | FFbest | FFpair | FFnote | Distorted? | Alloc% | Alloc$ | Skew | Mom | Strategies | Tier |",
+        "|--------|----------|------|-------|---------|--------|--------|--------|------------|--------|--------|------|-----|------------|------|", 
     ]
     for _, r in view.iterrows():
         d = r.to_dict()
@@ -707,7 +847,8 @@ def to_markdown(df: pd.DataFrame, args: argparse.Namespace) -> str:
         ps = f"{d.get('put_skew', 0):.2f}" if not np.isnan(d.get("put_skew", float("nan"))) else "-"
         mom = d.get("momentum_dir", "?")[:4]
         strats = d.get("strategies", "") or "-"
-        lines.append(f"| {sym} | {edate} | {spot} | {iv_rv} | {mv_ratio} | {ff} | {ff_pair} | {ff_note} | {distorted} | {alloc_pct} | {alloc_usd} | {ps} | {mom} | {strats} |")
+        tier_lbl = d.get("tier_label", "")
+        lines.append(f"| {sym} | {edate} | {spot} | {iv_rv} | {mv_ratio} | {ff} | {ff_pair} | {ff_note} | {distorted} | {alloc_pct} | {alloc_usd} | {ps} | {mom} | {strats} | {tier_lbl} |")
 
     lines += ["", "## Per-Row Advice", ""]
     for _, r in view.iterrows():

@@ -9,11 +9,21 @@ from pathlib import Path
 import pandas as pd
 
 from alerts import format_daily_alert, format_trade_alert, send_discord_webhook
-from openbb_earnings_iv_scanner import append_tracker, scan, to_markdown as generate_markdown
+from openbb_earnings_iv_scanner import append_tracker, scan, analyze_single_ticker, to_markdown as generate_markdown
 from watchlist import append_watchlist
 
 
 def run_pipeline(args: argparse.Namespace) -> pd.DataFrame:
+    if getattr(args, 'analyze', None):
+        ticker = args.analyze.strip().upper()
+        print(f"\n=== ANALYZING {ticker} ===\n")
+        result = analyze_single_ticker(ticker, args)
+        if result is not None:
+            if hasattr(result, "items"):
+                for k, v in result.items():
+                    print(f"  {k}: {v}")
+        return pd.DataFrame()
+
     df = scan(
         args.window_days,
         args.top_n,
@@ -45,6 +55,24 @@ def run_pipeline(args: argparse.Namespace) -> pd.DataFrame:
         alert = format_daily_alert(df)
         print(alert)
 
+    if getattr(args, 'iron_fly', False) and not df.empty and "tier" in df.columns:
+        from scanner.iron_fly import calculate_iron_fly
+        from openbb_earnings_iv_scanner import OpenBBClient
+        t1 = df[df["tier"] == 1]
+        for _, row in t1.iterrows():
+            try:
+                client = OpenBBClient()
+                chain = client.get_options_chain(row["symbol"])
+                fly = calculate_iron_fly(chain, spot=row["spot"])
+                if not fly["error"]:
+                    print(f"\n  IRON FLY for {row['symbol']}:")
+                    print(f"    SHORT: ${fly['short_put_strike']}P / ${fly['short_call_strike']}C = ${fly['total_credit']} credit")
+                    print(f"    LONG:  ${fly['long_put_strike']}P / ${fly['long_call_strike']}C = ${fly['total_debit']} debit")
+                    print(f"    Net: ${fly['net_credit']} | Max loss: ${fly['max_loss']} | R:R 1:{fly['risk_reward_ratio']}")
+                    print(f"    BEs: {fly['lower_breakeven']} - {fly['upper_breakeven']}")
+            except Exception as e:
+                print(f"  Iron Fly error for {row['symbol']}: {e}")
+
     webhook = getattr(args, "discord_webhook", "")
     if webhook and not df.empty:
         signaled = df[df["strategies"].fillna("").astype(str).str.len() > 0]
@@ -66,6 +94,7 @@ def run_pipeline(args: argparse.Namespace) -> pd.DataFrame:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Options Machine — Daily Scan")
     parser.add_argument("--window-days", type=int, default=14)
+    parser.add_argument("-a", "--analyze", default="", help="Analyze a single ticker symbol")
     parser.add_argument("--top-n", type=int, default=25)
     parser.add_argument("--min-oi", type=int, default=0)
     parser.add_argument("--min-vol", type=int, default=0)
@@ -79,6 +108,7 @@ def main() -> int:
     parser.add_argument("--default-alloc", type=float, default=0.04)
     parser.add_argument("--portfolio-dd", type=float, default=0.0)
     parser.add_argument("--discord-webhook", default="", help="Optional Discord webhook URL for trade alert push")
+    parser.add_argument("--iron-fly", "-i", action="store_true", help="Calculate Iron Fly for Tier 1 candidates")
     args = parser.parse_args()
 
     run_pipeline(args)

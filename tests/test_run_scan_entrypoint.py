@@ -58,6 +58,7 @@ class RunScanEntrypointTests(unittest.TestCase):
                 capital=100000.0,
                 default_alloc=0.04,
                 portfolio_dd=0.0,
+                analyze="",
             )
 
             with (
@@ -81,6 +82,32 @@ class RunScanEntrypointTests(unittest.TestCase):
 
             fmt_mock.assert_called_once()
             print_mock.assert_any_call("ALERT")
+
+
+    def test_analyze_mode_uses_single_ticker_path(self) -> None:
+        df = pd.DataFrame([{"symbol": "SPY", "strategies": "", "earnings_date": "2026-03-20"}])
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            args = Namespace(
+                window_days=14,
+                top_n=25,
+                min_oi=0,
+                min_vol=0,
+                debug=True,
+                alert=False,
+                out_csv=str(base / "outputs" / "scan.csv"),
+                out_md=str(base / "outputs" / "scan.md"),
+                tracker_jsonl=str(base / "outputs" / "tracker.jsonl"),
+                watchlist_jsonl=str(base / "data" / "watchlist.jsonl"),
+                capital=None,
+                default_alloc=0.04,
+                portfolio_dd=0.0,
+                analyze="SPY",
+            )
+            with patch("run_scan.analyze_single_ticker", return_value=df) as a_mock, patch("run_scan.scan") as scan_mock:
+                run_scan.run_pipeline(args)
+            a_mock.assert_called_once()
+            scan_mock.assert_not_called()
 
 
 if __name__ == "__main__":
