@@ -101,7 +101,9 @@ backtest_df = load_csv(backtest_path)
 scan_df = load_csv(scan_path)
 mc = load_json(mc_path)
 
-tab_overview, tab_backtest, tab_mc, tab_alerts = st.tabs(["Overview", "Backtest", "Monte Carlo", "Alerts"])
+tab_overview, tab_backtest, tab_mc, tab_alerts, tab_config = st.tabs(
+    ["📊 Overview", "⚡ Backtest", "🎲 Monte Carlo", "🔔 Alerts", "⚙️ Config"]
+)
 
 # ── Overview Tab ──────────────────────────────────────────────
 with tab_overview:
@@ -136,6 +138,13 @@ with tab_overview:
 
     if not backtest_df.empty:
         st.dataframe(backtest_df.tail(50), use_container_width=True)
+        st.download_button(
+            "📥 Export Overview",
+            backtest_df.to_csv(index=False),
+            "overview.csv",
+            "text/csv",
+            key="dl_overview",
+        )
 
 # ── Backtest Tab ──────────────────────────────────────────────
 with tab_backtest:
@@ -209,6 +218,8 @@ with tab_mc:
             st.plotly_chart(fig_fan, use_container_width=True)
 
         st.dataframe(pd.DataFrame([mc]), use_container_width=True)
+        mc_csv = pd.DataFrame([mc]).to_csv(index=False)
+        st.download_button("📥 Export MC Results", mc_csv, "monte_carlo.csv", "text/csv", key="dl_mc")
 
 # ── Alerts Tab ────────────────────────────────────────────────
 with tab_alerts:
@@ -232,3 +243,104 @@ with tab_alerts:
                 "ff_best": st.column_config.NumberColumn("FF Best", format="%.2f"),
             },
         )
+        csv_alerts = (display_df[show_cols] if show_cols else display_df).to_csv(index=False)
+        st.download_button("📥 Export Alerts CSV", csv_alerts, "alerts.csv", "text/csv", key="dl_alerts")
+
+# ── Config Tab ────────────────────────────────────────────────
+with tab_config:
+    st.subheader("⚙️ Scanner Configuration")
+
+    config_path = Path("scanner_config.json")
+
+    if config_path.exists():
+        current_cfg = json.loads(config_path.read_text(encoding="utf-8"))
+    else:
+        from scanner.config import _DEFAULTS
+        current_cfg = json.loads(json.dumps(_DEFAULTS))
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("### Strategy A (IV Crush)")
+        sa_iv_rv = st.number_input(
+            "IV/RV Minimum",
+            value=float(current_cfg.get("strategy_a", {}).get("iv_rv_min", 1.25)),
+            step=0.05,
+            key="cfg_sa_iv_rv",
+        )
+
+        st.markdown("### Strategy B (Forward Factor)")
+        sb_strong = st.number_input(
+            "FF Strong Threshold",
+            value=float(current_cfg.get("strategy_b", {}).get("ff_strong_threshold", 0.20)),
+            step=0.05,
+            key="cfg_sb_strong",
+        )
+        sb_moderate = st.number_input(
+            "FF Moderate Threshold",
+            value=float(current_cfg.get("strategy_b", {}).get("ff_moderate_threshold", 0.10)),
+            step=0.05,
+            key="cfg_sb_moderate",
+        )
+
+        st.markdown("### Strategy C (Skew)")
+        sc_skew = st.number_input(
+            "Put Skew Minimum",
+            value=float(current_cfg.get("strategy_c", {}).get("put_skew_min", 1.3)),
+            step=0.1,
+            key="cfg_sc_skew",
+        )
+
+    with col2:
+        st.markdown("### Hard Filters")
+        hf_price = st.number_input(
+            "Min Stock Price ($)",
+            value=float(current_cfg.get("hard_filters", {}).get("min_price", 10.0)),
+            step=1.0,
+            key="cfg_hf_price",
+        )
+        hf_oi = st.number_input(
+            "Min Open Interest",
+            value=int(current_cfg.get("hard_filters", {}).get("min_open_interest", 2000)),
+            step=100,
+            key="cfg_hf_oi",
+        )
+
+        st.markdown("### Tiering")
+        t_vol_pass = st.number_input(
+            "Volume Pass Threshold",
+            value=int(current_cfg.get("tiering", {}).get("volume_pass", 1500000)),
+            step=100000,
+            key="cfg_t_vol",
+        )
+        t_iv_rv = st.number_input(
+            "IV/RV Pass",
+            value=float(current_cfg.get("tiering", {}).get("iv_rv_pass", 1.25)),
+            step=0.05,
+            key="cfg_t_ivrv",
+        )
+
+    if st.button("💾 Save Configuration", key="save_cfg"):
+        new_cfg = {
+            "strategy_a": {"iv_rv_min": sa_iv_rv},
+            "strategy_b": {
+                "ff_strong_threshold": sb_strong,
+                "ff_moderate_threshold": sb_moderate,
+            },
+            "strategy_c": {"put_skew_min": sc_skew},
+            "hard_filters": {"min_price": hf_price, "min_open_interest": int(hf_oi)},
+            "tiering": {"volume_pass": int(t_vol_pass), "iv_rv_pass": t_iv_rv},
+        }
+        config_path.write_text(json.dumps(new_cfg, indent=2), encoding="utf-8")
+        st.success("✅ Configuration saved!")
+        st.cache_data.clear()
+
+    with st.expander("📝 View/Edit Raw JSON"):
+        raw = st.text_area("scanner_config.json", json.dumps(current_cfg, indent=2), height=300, key="raw_cfg")
+        if st.button("Save Raw JSON", key="save_raw"):
+            try:
+                parsed = json.loads(raw)
+                config_path.write_text(json.dumps(parsed, indent=2), encoding="utf-8")
+                st.success("✅ Raw JSON saved!")
+            except json.JSONDecodeError as e:
+                st.error(f"Invalid JSON: {e}")
