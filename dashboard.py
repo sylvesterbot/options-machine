@@ -315,6 +315,7 @@ with tab_alerts:
         if sort_by in filtered.columns:
             filtered = filtered.sort_values(sort_by, ascending=False)
 
+        st.caption(f"Showing {len(filtered)} alerts")
         for _, row in filtered.iterrows():
             d = row.to_dict()
             tier = d.get("tier_label", "")
