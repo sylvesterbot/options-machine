@@ -44,6 +44,15 @@ def _select_legs(entry_chain: pd.DataFrame, entry_spot: float, ff_pair: str, pai
     c = c[(c["expiration"].isin([front_exp, back_exp])) & (c["option_type"].astype(str).str.lower().str.startswith("c"))]
     if c.empty:
         raise ValueError("No call options for selected FF pair")
+
+    if "delta" in c.columns:
+        c["abs_delta"] = pd.to_numeric(c["delta"], errors="coerce").abs()
+        atm = c[(c["abs_delta"] >= 0.35) & (c["abs_delta"] <= 0.50)]
+        if not atm.empty:
+            idx = atm["abs_delta"].sub(0.50).abs().idxmin()
+            strike = float(pd.to_numeric(atm.loc[idx, "strike"], errors="coerce"))
+            return CalendarLeg(expiration=front_exp, strike=strike), CalendarLeg(expiration=back_exp, strike=strike)
+
     c["dist"] = (pd.to_numeric(c["strike"], errors="coerce") - entry_spot).abs()
     strike = float(pd.to_numeric(c.loc[c["dist"].idxmin(), "strike"], errors="coerce"))
     return CalendarLeg(expiration=front_exp, strike=strike), CalendarLeg(expiration=back_exp, strike=strike)

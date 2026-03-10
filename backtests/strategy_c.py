@@ -82,6 +82,7 @@ def simulate_strategy_c(
     holding_days: int = 10,
     stop_loss_pct: float = -0.50,
     target_profit_pct: float = 0.50,
+    spread_width: float | None = None,
     use_kelly: bool = False,
     initial_capital: float = 100000.0,
     slippage_pct: float = 0.0,
@@ -154,11 +155,18 @@ def simulate_strategy_c(
         else:
             short_strike = min(strikes, key=lambda s: abs(s - target_short))
 
-        lower = [s for s in strikes if s < short_strike]
-        if not lower:
-            i += 1
-            continue
-        long_strike = max(lower)
+        if spread_width is not None:
+            target_long = float(short_strike) - float(spread_width)
+            long_strike = min(strikes, key=lambda s: abs(float(s) - target_long))
+            if long_strike >= short_strike:
+                i += 1
+                continue
+        else:
+            lower = [s for s in strikes if s < short_strike]
+            if not lower:
+                i += 1
+                continue
+            long_strike = max(lower)
 
         try:
             short_mid = _mid_put(puts, expiry, short_strike)
