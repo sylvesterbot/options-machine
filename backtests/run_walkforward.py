@@ -35,6 +35,52 @@ def build_walkforward_windows(start: dt.date, end: dt.date, train_years: int = 2
     return windows
 
 
+def optimize_params_on_training(
+    provider,
+    symbol: str,
+    train_start: dt.date,
+    train_end: dt.date,
+    strategy: str,
+    base_params: dict,
+) -> dict:
+    """Grid search key parameters on training window, return best params."""
+    if strategy == "B":
+        best_sharpe = -999.0
+        best_params = dict(base_params)
+        for ff_thresh in [0.10, 0.15, 0.20, 0.25, 0.30]:
+            for hold in [5, 7, 10, 14]:
+                params = dict(base_params, ff_threshold=ff_thresh, holding_days=hold)
+                tdf = simulate_strategy_b(provider=provider, symbol=symbol, start=train_start, end=train_end, **params)
+                if tdf.empty or len(tdf) < 3:
+                    continue
+                r = pd.to_numeric(tdf["return_pct"], errors="coerce").dropna()
+                vol = float(r.std()) if len(r) > 1 else 1.0
+                sharpe = float(r.mean() / vol) if vol > 0 else 0.0
+                if sharpe > best_sharpe:
+                    best_sharpe = sharpe
+                    best_params = params
+        return best_params
+
+    if strategy == "C":
+        best_sharpe = -999.0
+        best_params = dict(base_params)
+        for skew_thresh in [1.1, 1.2, 1.3, 1.4, 1.5]:
+            for hold in [5, 7, 10, 14]:
+                params = dict(base_params, skew_threshold=skew_thresh, holding_days=hold)
+                tdf = simulate_strategy_c(provider=provider, symbol=symbol, start=train_start, end=train_end, **params)
+                if tdf.empty or len(tdf) < 3:
+                    continue
+                r = pd.to_numeric(tdf["return_pct"], errors="coerce").dropna()
+                vol = float(r.std()) if len(r) > 1 else 1.0
+                sharpe = float(r.mean() / vol) if vol > 0 else 0.0
+                if sharpe > best_sharpe:
+                    best_sharpe = sharpe
+                    best_params = params
+        return best_params
+
+    return base_params
+
+
 def run_walkforward(
     start: dt.date,
     end: dt.date,
@@ -54,6 +100,7 @@ def run_walkforward(
     stop_loss: float = -0.20,
     slippage: float = 0.0,
     kelly_min_trades: int = 50,
+    optimize: bool = False,
 ) -> pd.DataFrame:
     provider = resolve_provider(provider_name, root_dir=provider_root)
     windows = build_walkforward_windows(start, end, train_years=train_years, test_years=test_years, step_years=step_years)
@@ -63,19 +110,31 @@ def run_walkforward(
     for i, w in enumerate(windows, start=1):
         for sym in symbols:
             if strategy == "B":
+                params_b = {
+                    "ff_threshold": ff_threshold,
+                    "holding_days": holding_days,
+                    "exit_mode": exit_mode,
+                    "iv_rv_max": iv_rv_max,
+                    "use_kelly": use_kelly,
+                    "stop_loss_pct": stop_loss,
+                    "slippage_pct": slippage,
+                    "kelly_min_trades": kelly_min_trades,
+                }
+                if optimize and w["train_end"] >= w["train_start"]:
+                    params_b = optimize_params_on_training(
+                        provider=provider,
+                        symbol=sym,
+                        train_start=w["train_start"],
+                        train_end=w["train_end"],
+                        strategy="B",
+                        base_params=params_b,
+                    )
                 tdf = simulate_strategy_b(
                     provider=provider,
                     symbol=sym,
                     start=w["test_start"],
                     end=w["test_end"],
-                    ff_threshold=ff_threshold,
-                    holding_days=holding_days,
-                    exit_mode=exit_mode,
-                    iv_rv_max=iv_rv_max,
-                    use_kelly=use_kelly,
-                    stop_loss_pct=stop_loss,
-                    slippage_pct=slippage,
-                    kelly_min_trades=kelly_min_trades,
+                    **params_b,
                 )
                 if not tdf.empty:
                     tdf = tdf.copy()
@@ -84,16 +143,28 @@ def run_walkforward(
                     tdf["provider"] = provider_name
                     all_trades.append(tdf)
             elif strategy == "C":
+                params_c = {
+                    "holding_days": holding_days,
+                    "use_kelly": use_kelly,
+                    "stop_loss_pct": stop_loss,
+                    "slippage_pct": slippage,
+                    "kelly_min_trades": kelly_min_trades,
+                }
+                if optimize and w["train_end"] >= w["train_start"]:
+                    params_c = optimize_params_on_training(
+                        provider=provider,
+                        symbol=sym,
+                        train_start=w["train_start"],
+                        train_end=w["train_end"],
+                        strategy="C",
+                        base_params=params_c,
+                    )
                 tdf = simulate_strategy_c(
                     provider=provider,
                     symbol=sym,
                     start=w["test_start"],
                     end=w["test_end"],
-                    holding_days=holding_days,
-                    use_kelly=use_kelly,
-                    stop_loss_pct=stop_loss,
-                    slippage_pct=slippage,
-                    kelly_min_trades=kelly_min_trades,
+                    **params_c,
                 )
                 if not tdf.empty:
                     tdf = tdf.copy()
@@ -130,6 +201,7 @@ def main() -> int:
     parser.add_argument("--stop-loss", type=float, default=-0.20, help="Intra-trade stop loss threshold (return), e.g. -0.20")
     parser.add_argument("--slippage", type=float, default=0.0, help="Slippage applied at entry/exit pricing")
     parser.add_argument("--kelly-min-trades", type=int, default=50, help="Minimum trade history before empirical Kelly sizing")
+    parser.add_argument("--optimize", action="store_true", help="Optimize parameters on training window (true walk-forward)")
     args = parser.parse_args()
 
     start = dt.date.fromisoformat(args.start)
@@ -157,6 +229,7 @@ def main() -> int:
         stop_loss=args.stop_loss,
         slippage=args.slippage,
         kelly_min_trades=args.kelly_min_trades,
+        optimize=args.optimize,
     )
     summary = summarize_trade_log(df)
     print(f"walkforward done. provider={args.provider} strategy={args.strategy} trades={len(df)} out={args.out}")
