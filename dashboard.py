@@ -11,8 +11,28 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from alerts import format_trade_alert
+
 st.set_page_config(page_title="Options Machine Dashboard", layout="wide")
 st.title("Options Machine Dashboard")
+
+try:
+    from scanner.regime import classify_regime, get_vix_level
+
+    _vix = get_vix_level()
+    if not pd.isna(_vix):
+        _regime = classify_regime(_vix)
+        _color_map = {"CALM": "🟢", "NORMAL": "🔵", "ELEVATED": "🟡", "CRISIS": "🔴"}
+        _icon = _color_map.get(_regime["regime"], "⚪")
+        st.markdown(
+            f'<div style="background:rgba(0,212,170,0.08);border-radius:8px;padding:8px 16px;'
+            f'margin-bottom:16px;display:inline-block;">'
+            f'{_icon} <strong>VIX: {_vix:.1f}</strong> — {_regime["regime"]} '
+            f'<span style="opacity:0.7;">({_regime["note"]})</span></div>',
+            unsafe_allow_html=True,
+        )
+except Exception:
+    pass
 
 st.markdown("""
 <style>
@@ -134,6 +154,24 @@ with tab_overview:
         st.dataframe(backtest_df.tail(50), use_container_width=True)
         st.download_button("📥 Export Overview", backtest_df.to_csv(index=False), "overview.csv", "text/csv", key="dl_overview")
 
+    if not scan_df.empty:
+        st.subheader("Scanner Snapshot")
+        display_cols = [
+            "symbol",
+            "earnings_date",
+            "days_to_earnings",
+            "strategies",
+            "tier_label",
+            "iv_rv_ratio",
+            "ff_best",
+            "put_skew",
+            "event_vol",
+            "event_premium_pct",
+            "suggested_allocation_pct",
+        ]
+        display_cols = [c for c in display_cols if c in scan_df.columns]
+        st.dataframe(scan_df[display_cols] if display_cols else scan_df, use_container_width=True)
+
 # ── Backtest Tab ──────────────────────────────────────────────
 with tab_backtest:
     st.subheader("⚡ Backtest Runner")
@@ -205,6 +243,10 @@ with tab_backtest:
 
             st.download_button("📥 Export Backtest CSV", backtest_df.to_csv(index=False), "backtest_trades.csv", "text/csv")
             st.dataframe(backtest_df, use_container_width=True)
+            if "exit_reason" in backtest_df.columns:
+                exit_counts = backtest_df["exit_reason"].value_counts()
+                st.subheader("Exit Reason Distribution")
+                st.bar_chart(exit_counts)
 
 # ── Monte Carlo Tab ───────────────────────────────────────────
 with tab_mc:
@@ -317,35 +359,15 @@ with tab_alerts:
 
         st.caption(f"Showing {len(filtered)} alerts")
         for _, row in filtered.iterrows():
-            d = row.to_dict()
-            tier = d.get("tier_label", "")
-            tier_class = {"TIER_1": "tier-1", "TIER_2": "tier-2", "NEAR_MISS": "near-miss"}.get(tier, "")
-            tier_icon = {"TIER_1": "🔴", "TIER_2": "🟡", "NEAR_MISS": "⚪"}.get(tier, "")
-            iv_rv = d.get("iv_rv_ratio", float("nan"))
-            ff = d.get("ff_best", float("nan"))
-
+            row_dict = row.to_dict()
+            alert_text = format_trade_alert(row_dict, capital=100000.0)
+            tier = row_dict.get("tier_label", "")
+            css_class = {"TIER_1": "tier-1", "TIER_2": "tier-2", "NEAR_MISS": "near-miss"}.get(tier, "")
+            safe_text = alert_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             st.markdown(
-                f"""
-                <div class="{tier_class}" style="padding: 12px 16px; margin: 8px 0; border-radius: 8px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <div>
-                            <strong style="font-size: 1.2em;">{tier_icon} {d.get('symbol', '?')}</strong>
-                            <span style="color: #8B95A5; margin-left: 12px;">Earnings: {d.get('earnings_date', '?')}</span>
-                        </div>
-                        <div>
-                            <span style="background: rgba(0,212,170,0.2); padding: 4px 12px; border-radius: 16px; font-size: 0.85em;">
-                                {d.get('strategies', '-')}
-                            </span>
-                        </div>
-                    </div>
-                    <div style="margin-top: 8px; color: #B0BEC5; font-size: 0.9em;">
-                        IV/RV: <strong>{'%.2f' % iv_rv if not pd.isna(iv_rv) else 'n/a'}</strong> &nbsp;|&nbsp;
-                        FF: <strong>{'%.2f' % ff if not pd.isna(ff) else 'n/a'}</strong>
-                        {' &nbsp;|&nbsp; Exit: ' + str(d.get('exit_reason', '')) if d.get('exit_reason') else ''}
-                        {' &nbsp;|&nbsp; ⚠️ ' + str(d.get('filter_failures', '')) if d.get('filter_failures') else ''}
-                    </div>
-                </div>
-                """,
+                f'<div class="alert-card {css_class}" style="padding:16px;margin:8px 0;'
+                f'border-radius:8px;white-space:pre-wrap;font-family:monospace;font-size:13px;">'
+                f'{safe_text}</div>',
                 unsafe_allow_html=True,
             )
 
