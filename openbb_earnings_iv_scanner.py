@@ -38,6 +38,7 @@ from scanner.greeks import enrich_chain_with_greeks, compute_position_greeks
 from scanner.signal_history import append_signals, get_ticker_zscore, get_iv_percentile
 from scanner.config import load_config
 from scanner.regime import classify_regime, get_vix_level
+from scanner.event_vol import decompose_event_vol
 from backtests.kelly import compute_kelly_fraction
 
 
@@ -109,6 +110,8 @@ class ScanRow:
     tier: int = 0
     tier_label: str = ""
     filter_failures: str = ""
+    event_vol: float = float("nan")
+    event_premium_pct: float = float("nan")
 
 
 class OpenBBClient:
@@ -611,6 +614,7 @@ def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = 
                 continue
             earnings_dt = earnings_dt.date()
             days_to_earnings = (earnings_dt - dt.date.today()).days
+            ev_data = decompose_event_vol(iv30, rv30, days_to_earnings)
             distorted, ff_note = compute_earnings_distortion(earnings_dt, ff_data.get("pair_expiries", {}), ff_data.get("ff_best_pair", "NONE"))
             chain_g = enrich_chain_with_greeks(chain, spot=spot)
             pos_greeks = compute_position_greeks(chain_g)
@@ -721,6 +725,8 @@ def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = 
                     tier=tier,
                     tier_label=tier_label,
                     filter_failures=filter_failures,
+                    event_vol=ev_data["event_vol"],
+                    event_premium_pct=ev_data["event_premium_pct"],
                 )
             )
         except Exception as exc:
