@@ -37,6 +37,7 @@ from scanner.historical_moves import compute_historical_move_stats
 from scanner.greeks import enrich_chain_with_greeks, compute_position_greeks
 from scanner.signal_history import append_signals, get_ticker_zscore, get_iv_percentile
 from scanner.config import load_config
+from scanner.regime import classify_regime, get_vix_level
 from backtests.kelly import compute_kelly_fraction
 
 
@@ -514,6 +515,14 @@ def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = 
     cfg_min_vol = int(scanner_cfg.get("min_vol", 0) or 0)
     min_oi = max(int(min_oi), cfg_min_oi)
     min_vol = max(int(min_vol), cfg_min_vol)
+
+    vix = get_vix_level()
+    regime = classify_regime(vix) if not np.isnan(vix) else {"regime": "UNKNOWN", "allocation_multiplier": 1.0, "note": "VIX unavailable"}
+    if regime["regime"] == "CRISIS":
+        if debug:
+            print(f"[debug] VIX={vix:.1f} — CRISIS regime, halting scan")
+        return pd.DataFrame(columns=[f.name for f in ScanRow.__dataclass_fields__.values()])
+
     tickers = [t.upper() for t in (tickers_override or [])] if tickers_override else obb.get_sp500_universe()
     start = dt.date.today()
     end = start + dt.timedelta(days=window_days)
@@ -649,6 +658,7 @@ def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = 
             )
 
             alloc_pct_capped, was_capped = apply_liquidity_cap(alloc_pct, vol, oi)
+            alloc_pct_capped = alloc_pct_capped * regime.get("allocation_multiplier", 1.0)
             if capital is not None:
                 alloc_usd = float(capital) * alloc_pct_capped
 
