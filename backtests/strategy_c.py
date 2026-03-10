@@ -27,6 +27,7 @@ REQUIRED_COLUMNS = [
     "put_skew",
     "rv_edge",
     "stopped_out",
+    "exit_reason",
 ]
 
 
@@ -80,6 +81,7 @@ def simulate_strategy_c(
     rv_edge_min: float = 0.0,
     holding_days: int = 10,
     stop_loss_pct: float = -0.50,
+    target_profit_pct: float = 0.50,
     use_kelly: bool = False,
     initial_capital: float = 100000.0,
     slippage_pct: float = 0.0,
@@ -175,6 +177,7 @@ def simulate_strategy_c(
 
         exit_idx = min(i + int(holding_days), len(px) - 1)
         stopped_out = False
+        exit_reason = "expiry"
 
         for j in range(i + 1, exit_idx + 1):
             d = px.loc[j, "date"]
@@ -199,9 +202,14 @@ def simulate_strategy_c(
             raw_exit_cost_daily = short_daily - long_daily
             exit_cost_daily = raw_exit_cost_daily * (1.0 + slippage_pct)
             ret_daily = float((entry_credit - exit_cost_daily) / max_loss)
+            if ret_daily >= float(target_profit_pct):
+                exit_idx = j
+                exit_reason = "profit_target"
+                break
             if ret_daily <= float(stop_loss_pct):
                 exit_idx = j
                 stopped_out = True
+                exit_reason = "stop_loss"
                 break
 
         exit_date = px.loc[exit_idx, "date"]
@@ -267,6 +275,7 @@ def simulate_strategy_c(
                 "put_skew": float(put_skew),
                 "rv_edge": float(rv_edge),
                 "stopped_out": bool(stopped_out),
+                "exit_reason": str(exit_reason),
             }
         )
         i = exit_idx + 1

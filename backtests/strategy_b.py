@@ -62,6 +62,7 @@ def simulate_strategy_b(
     use_kelly: bool = False,
     initial_capital: float = 100000.0,
     stop_loss_pct: float = -0.20,
+    target_profit_pct: float | None = None,
     max_concurrent: int = 1,
     slippage_pct: float = 0.0,
     kelly_min_trades: int = 50,
@@ -128,6 +129,7 @@ def simulate_strategy_b(
         exit_idx = min(i + holding_days, len(px) - 1)
         ff_exit_val = float("nan")
         stopped_out = False
+        exit_reason = "expiry"
 
         if exit_mode == "mean_revert":
             for j in range(i + 1, min(i + holding_days, len(px) - 1) + 1):
@@ -157,9 +159,14 @@ def simulate_strategy_b(
             raw_exit_daily = daily_back - daily_front
             exit_daily = raw_exit_daily * (1.0 - slippage_pct)
             ret_daily = float((exit_daily - entry_price) / entry_price)
+            if target_profit_pct is not None and ret_daily >= float(target_profit_pct):
+                exit_idx = j
+                exit_reason = "profit_target"
+                break
             if ret_daily <= float(stop_loss_pct):
                 exit_idx = j
                 stopped_out = True
+                exit_reason = "stop_loss"
                 break
 
         exit_date = px.loc[exit_idx, "date"]
@@ -205,6 +212,7 @@ def simulate_strategy_b(
                 "ff_exit": ff_exit_val,
                 "ff_pair": ff.get("ff_best_pair", "NONE"),
                 "stopped_out": bool(stopped_out),
+                "exit_reason": str(exit_reason),
             }
         )
         i = exit_idx + 1
