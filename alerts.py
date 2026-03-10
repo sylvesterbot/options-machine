@@ -3,6 +3,8 @@ import pandas as pd
 import numpy as np
 import requests
 
+from scanner.regime import classify_regime, get_vix_level
+
 
 def _strategy_a_action(d: dict, capital: float = 100000.0) -> str:
     """Generate Strategy A (IV Crush) action text with iron fly details."""
@@ -10,6 +12,7 @@ def _strategy_a_action(d: dict, capital: float = 100000.0) -> str:
     em = d.get("expected_move_pct", float("nan"))
     avg_hist = d.get("avg_hist_move", float("nan"))
     iv_pct = d.get("iv_percentile_52w", float("nan"))
+    event_premium = d.get("event_premium_pct", float("nan"))
 
     why_parts = []
     if not pd.isna(iv_rv):
@@ -22,6 +25,8 @@ def _strategy_a_action(d: dict, capital: float = 100000.0) -> str:
         why_parts.append(
             f"Expected Move: {em*100:.1f}% vs Avg Historical: {avg_hist*100:.1f}% (overpriced by {overpriced:.0f}%)"
         )
+    if not pd.isna(event_premium):
+        why_parts.append(f"Event Premium: {event_premium*100:.0f}% above ambient vol")
     why = "\n   • ".join(why_parts) if why_parts else "IV/RV ratio elevated"
 
     if not pd.isna(iv_rv) and iv_rv >= 1.6:
@@ -174,6 +179,12 @@ def format_daily_alert(df: pd.DataFrame, capital: float = 100000.0) -> str:
         return "📊 Options Machine — No candidates found today."
 
     lines = [f"📊 Options Machine Scan — {pd.Timestamp.now().strftime('%b %d, %Y')}", ""]
+
+    vix = get_vix_level()
+    if not pd.isna(vix):
+        regime = classify_regime(vix)
+        lines.append(f"📈 VIX: {vix:.1f} — {regime['regime']} ({regime['note']})")
+        lines.append("")
 
     if "tier" in df.columns:
         tier1 = df[df["tier"] == 1]

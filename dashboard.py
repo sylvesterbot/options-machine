@@ -341,6 +341,7 @@ with tab_alerts:
                     <div style="margin-top: 8px; color: #B0BEC5; font-size: 0.9em;">
                         IV/RV: <strong>{'%.2f' % iv_rv if not pd.isna(iv_rv) else 'n/a'}</strong> &nbsp;|&nbsp;
                         FF: <strong>{'%.2f' % ff if not pd.isna(ff) else 'n/a'}</strong>
+                        {' &nbsp;|&nbsp; Exit: ' + str(d.get('exit_reason', '')) if d.get('exit_reason') else ''}
                         {' &nbsp;|&nbsp; ⚠️ ' + str(d.get('filter_failures', '')) if d.get('filter_failures') else ''}
                     </div>
                 </div>
