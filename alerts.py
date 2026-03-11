@@ -115,6 +115,11 @@ def _strategy_c_action(d: dict, capital: float = 100000.0) -> str:
         alloc = 0.04
     alloc_usd = capital * alloc
 
+    stop_mult = d.get("stop_loss_multiplier", 1.0)
+    if pd.isna(stop_mult):
+        stop_mult = 1.0
+    adjusted_stop = -50 * float(stop_mult)
+
     strike_info = ""
     if not pd.isna(otm_put_strike):
         strike_info = f"   • SELL: ${otm_put_strike:.0f}P (25Δ) — buy next strike down for protection\n"
@@ -123,7 +128,7 @@ def _strategy_c_action(d: dict, capital: float = 100000.0) -> str:
         f"📊 WHY: {why}\n"
         f"🎯 ACTION: Sell PUT CREDIT SPREAD (~30 DTE)\n"
         f"{strike_info}"
-        f"   • Exit: Stop-loss at -50% max loss OR after 10 days\n"
+        f"   • Exit: Stop-loss at {adjusted_stop:.0f}% max loss OR after 10 days\n"
         f"💰 SIZING / Allocation: {alloc*100:.1f}% (${alloc_usd:,.0f}) | Alloc: {alloc*100:.1f}%"
     )
 
