@@ -24,6 +24,7 @@ _DEFAULTS = {
         "min_open_interest": 2000,
         "min_expected_move_usd": 0.90,
         "max_atm_delta": 0.57,
+        "max_ticker_allocation_pct": 0.05,
     },
     "tiering": {
         "volume_pass": 1_500_000,

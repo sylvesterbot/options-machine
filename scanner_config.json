@@ -8,6 +8,7 @@
   },
   "hard_filters": {
     "min_price": 10.0,
-    "min_open_interest": 2000
+    "min_open_interest": 2000,
+    "max_ticker_allocation_pct": 0.05
   }
 }

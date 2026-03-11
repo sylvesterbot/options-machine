@@ -663,6 +663,12 @@ def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = 
 
             alloc_pct_capped, was_capped = apply_liquidity_cap(alloc_pct, vol, oi)
             alloc_pct_capped = alloc_pct_capped * regime.get("allocation_multiplier", 1.0)
+
+            max_ticker_alloc = float(cfg.get("hard_filters", {}).get("max_ticker_allocation_pct", 0.05))
+            strat_count = len(strats)
+            if strat_count > 1:
+                alloc_pct_capped = min(alloc_pct_capped, max_ticker_alloc)
+
             if capital is not None:
                 alloc_usd = float(capital) * alloc_pct_capped
 
