@@ -115,8 +115,8 @@ backtest_df = load_csv(backtest_path)
 scan_df = load_csv(scan_path)
 mc = load_json(mc_path)
 
-tab_overview, tab_backtest, tab_mc, tab_alerts, tab_config = st.tabs(
-    ["📊 Overview", "⚡ Backtest", "🎲 Monte Carlo", "🔔 Alerts", "⚙️ Config"]
+tab_overview, tab_backtest, tab_mc, tab_alerts, tab_config, tab_journal = st.tabs(
+    ["📊 Overview", "⚡ Backtest", "🎲 Monte Carlo", "🔔 Alerts", "⚙️ Config", "📓 Journal"]
 )
 
 # ── Overview Tab ──────────────────────────────────────────────
@@ -427,3 +427,26 @@ with tab_config:
                 st.success("✅ Raw JSON saved!")
             except json.JSONDecodeError as e:
                 st.error(f"Invalid JSON: {e}")
+
+# ── Journal Tab ───────────────────────────────────────────────
+with tab_journal:
+    st.subheader("📓 Trade Journal")
+    try:
+        from scanner.trade_journal import load_journal, compute_hit_rate
+
+        journal = load_journal()
+        if journal:
+            jdf = pd.DataFrame(journal)
+            stats = compute_hit_rate(journal)
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Total Signals", stats["total_signals"])
+            col2.metric("Completed", stats["completed"])
+            col3.metric("Hit Rate", f"{stats['hit_rate']:.0%}")
+            col4.metric("Avg P&L", f"{stats['avg_pnl_pct']:.1f}%")
+            st.dataframe(jdf, use_container_width=True)
+            csv_data = jdf.to_csv(index=False)
+            st.download_button("📥 Export Journal", csv_data, "trade_journal.csv", "text/csv")
+        else:
+            st.info("No journal entries yet. Run a scan to start logging signals.")
+    except ImportError:
+        st.error("Trade journal module not found.")

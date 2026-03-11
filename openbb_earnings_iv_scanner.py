@@ -39,6 +39,7 @@ from scanner.signal_history import append_signals, get_ticker_zscore, get_iv_per
 from scanner.config import load_config
 from scanner.regime import classify_regime, get_vix_level
 from scanner.event_vol import decompose_event_vol
+from scanner.trade_journal import log_signal
 from backtests.kelly import compute_kelly_fraction
 
 
@@ -754,6 +755,11 @@ def scan(window_days: int, top_n: int, min_oi: int, min_vol: int, debug: bool = 
 
     df = pd.DataFrame([asdict(r) for r in rows])
     df = df.sort_values(by=["iv_rv_ratio", "iv30_proxy"], ascending=False).head(top_n)
+
+    for _, row in df.iterrows():
+        if row.get("strategies"):
+            log_signal(row.to_dict(), regime=regime.get("regime", "UNKNOWN"))
+
     return df
 
 
