@@ -83,9 +83,17 @@ def _strategy_b_action(d: dict, capital: float = 100000.0) -> str:
         alloc = 0.04
     alloc_usd = capital * alloc
 
+    skewed = d.get("momentum_dir", "NEUTRAL")
+    if skewed == "BULLISH":
+        action_note = "Buy SKEWED CALENDAR SPREAD (OTM Call — bullish bias)"
+    elif skewed == "BEARISH":
+        action_note = "Buy SKEWED CALENDAR SPREAD (OTM Put — bearish bias)"
+    else:
+        action_note = "Buy CALENDAR SPREAD (ATM)"
+
     return (
         f"📊 WHY: {why}\n"
-        f"🎯 ACTION: Buy CALENDAR SPREAD (ATM)\n"
+        f"🎯 ACTION: {action_note}\n"
         f"   • Tenor pair: {ff_pair} — sell front-month ATM call, buy back-month ATM call\n"
         f"   • Exit: When FF < 5% (mean revert) OR stop-loss -20% OR after 10 days\n"
         f"💰 SIZING / Allocation: {alloc*100:.1f}% (${alloc_usd:,.0f}) | Alloc: {alloc*100:.1f}% {'⚠️ Reduced for earnings distortion' if distorted else ''}"

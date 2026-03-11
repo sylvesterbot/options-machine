@@ -33,7 +33,7 @@ def _mid_price(chain: pd.DataFrame, expiration: dt.date, strike: float) -> float
     return float(((bid + ask) / 2.0).dropna().iloc[0])
 
 
-def _select_legs(entry_chain: pd.DataFrame, entry_spot: float, ff_pair: str, pair_expiries: dict) -> CalendarLeg:
+def _select_legs(entry_chain: pd.DataFrame, entry_spot: float, ff_pair: str, pair_expiries: dict, strike_offset: float = 0.0) -> CalendarLeg:
     if ff_pair not in pair_expiries:
         raise ValueError("Missing ff pair expiry info")
     front_exp = _to_date(pair_expiries[ff_pair][0])
@@ -45,15 +45,17 @@ def _select_legs(entry_chain: pd.DataFrame, entry_spot: float, ff_pair: str, pai
     if c.empty:
         raise ValueError("No call options for selected FF pair")
 
+    target_spot = entry_spot + strike_offset
+
     if "delta" in c.columns:
         c["abs_delta"] = pd.to_numeric(c["delta"], errors="coerce").abs()
         atm = c[(c["abs_delta"] >= 0.35) & (c["abs_delta"] <= 0.50)]
-        if not atm.empty:
+        if not atm.empty and strike_offset == 0.0:
             idx = atm["abs_delta"].sub(0.50).abs().idxmin()
             strike = float(pd.to_numeric(atm.loc[idx, "strike"], errors="coerce"))
             return CalendarLeg(expiration=front_exp, strike=strike), CalendarLeg(expiration=back_exp, strike=strike)
 
-    c["dist"] = (pd.to_numeric(c["strike"], errors="coerce") - entry_spot).abs()
+    c["dist"] = (pd.to_numeric(c["strike"], errors="coerce") - target_spot).abs()
     strike = float(pd.to_numeric(c.loc[c["dist"].idxmin(), "strike"], errors="coerce"))
     return CalendarLeg(expiration=front_exp, strike=strike), CalendarLeg(expiration=back_exp, strike=strike)
 
@@ -72,6 +74,7 @@ def simulate_strategy_b(
     initial_capital: float = 100000.0,
     stop_loss_pct: float = -0.20,
     target_profit_pct: float | None = None,
+    strike_offset: float = 0.0,
     max_concurrent: int = 1,
     slippage_pct: float = 0.0,
     kelly_min_trades: int = 50,
@@ -122,7 +125,13 @@ def simulate_strategy_b(
                     continue
 
         try:
-            front, back = _select_legs(chain, entry_spot, ff.get("ff_best_pair", "NONE"), ff.get("pair_expiries", {}))
+            front, back = _select_legs(
+                chain,
+                entry_spot,
+                ff.get("ff_best_pair", "NONE"),
+                ff.get("pair_expiries", {}),
+                strike_offset=strike_offset,
+            )
             entry_front = _mid_price(chain, front.expiration, front.strike)
             entry_back = _mid_price(chain, back.expiration, back.strike)
         except Exception:
